@@ -1,0 +1,5 @@
+{
+  "name": "POS Pintar",
+  "description": "Aplikasi Kasir Pintar Offline dengan fitur manajemen produk, transaksi, dan cetak struk Bluetooth (ESC/POS). Bisa diinstal dan digunakan tanpa internet.",
+  "requestFramePermissions": ["bluetooth"]
+}

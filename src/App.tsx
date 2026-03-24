@@ -71,6 +71,7 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
   const [settings, setSettings] = useState<Settings>(() => getLocal(STORAGE_KEYS.SETTINGS, {
@@ -311,59 +312,75 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#E4E3E0] font-sans text-[#1a1a1a] selection:bg-[#5A5A40] selection:text-white">
-      {/* Sidebar Navigation */}
-      <aside className="fixed left-0 top-0 bottom-0 w-20 md:w-24 bg-white border-r border-gray-100 flex flex-col items-center py-8 z-50">
-        <div className="w-12 h-12 bg-[#5A5A40] rounded-2xl flex items-center justify-center mb-12 shadow-lg shadow-[#5A5A40]/20">
-          <LayoutDashboard className="text-white w-6 h-6" />
-        </div>
-        
-        <nav className="flex flex-col gap-8">
-          <button 
-            onClick={() => setView("sales")}
-            className={cn(
-              "p-4 rounded-2xl transition-all duration-300",
-              view === "sales" ? "bg-[#F5F5F0] text-[#5A5A40] shadow-sm" : "text-gray-300 hover:text-[#5A5A40]"
-            )}
-          >
-            <ShoppingCart className="w-6 h-6" />
-          </button>
-          <button 
-            onClick={() => setView("products")}
-            className={cn(
-              "p-4 rounded-2xl transition-all duration-300",
-              view === "products" ? "bg-[#F5F5F0] text-[#5A5A40] shadow-sm" : "text-gray-300 hover:text-[#5A5A40]"
-            )}
-          >
-            <Package className="w-6 h-6" />
-          </button>
-          <button 
-            onClick={() => setView("settings")}
-            className={cn(
-              "p-4 rounded-2xl transition-all duration-300",
-              view === "settings" ? "bg-[#F5F5F0] text-[#5A5A40] shadow-sm" : "text-gray-300 hover:text-[#5A5A40]"
-            )}
-          >
-            <SettingsIcon className="w-6 h-6" />
-          </button>
-        </nav>
+      {/* Bottom Navigation Menu */}
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[60] flex flex-col items-center gap-4">
+        <AnimatePresence>
+          {isMenuOpen && (
+            <motion.nav 
+              initial={{ opacity: 0, y: 20, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.9 }}
+              className="bg-white/90 backdrop-blur-xl border border-white/20 shadow-2xl rounded-[32px] p-2 flex items-center gap-2"
+            >
+              <button 
+                onClick={() => { setView("sales"); setIsMenuOpen(false); }}
+                className={cn(
+                  "p-4 rounded-2xl transition-all duration-300 flex flex-col items-center gap-1",
+                  view === "sales" ? "bg-[#5A5A40] text-white shadow-lg" : "text-gray-400 hover:text-[#5A5A40] hover:bg-[#F5F5F0]"
+                )}
+              >
+                <ShoppingCart className="w-6 h-6" />
+                <span className="text-[10px] font-bold uppercase tracking-tighter">Kasir</span>
+              </button>
+              <button 
+                onClick={() => { setView("products"); setIsMenuOpen(false); }}
+                className={cn(
+                  "p-4 rounded-2xl transition-all duration-300 flex flex-col items-center gap-1",
+                  view === "products" ? "bg-[#5A5A40] text-white shadow-lg" : "text-gray-400 hover:text-[#5A5A40] hover:bg-[#F5F5F0]"
+                )}
+              >
+                <Package className="w-6 h-6" />
+                <span className="text-[10px] font-bold uppercase tracking-tighter">Produk</span>
+              </button>
+              <button 
+                onClick={() => { setView("settings"); setIsMenuOpen(false); }}
+                className={cn(
+                  "p-4 rounded-2xl transition-all duration-300 flex flex-col items-center gap-1",
+                  view === "settings" ? "bg-[#5A5A40] text-white shadow-lg" : "text-gray-400 hover:text-[#5A5A40] hover:bg-[#F5F5F0]"
+                )}
+              >
+                <SettingsIcon className="w-6 h-6" />
+                <span className="text-[10px] font-bold uppercase tracking-tighter">Setelan</span>
+              </button>
+              <div className="w-px h-8 bg-gray-100 mx-1" />
+              <button 
+                onClick={exportData}
+                className="p-4 rounded-2xl text-gray-400 hover:text-[#5A5A40] hover:bg-[#F5F5F0] transition-all"
+                title="Export Data"
+              >
+                <Download className="w-6 h-6" />
+              </button>
+              <label className="p-4 rounded-2xl text-gray-400 hover:text-[#5A5A40] hover:bg-[#F5F5F0] cursor-pointer transition-all">
+                <Upload className="w-6 h-6" />
+                <input type="file" accept=".json" onChange={importData} className="hidden" />
+              </label>
+            </motion.nav>
+          )}
+        </AnimatePresence>
 
-        <div className="mt-auto flex flex-col gap-4">
-          <label className="p-4 rounded-2xl text-gray-300 hover:text-[#5A5A40] cursor-pointer transition-all">
-            <Upload className="w-6 h-6" />
-            <input type="file" accept=".json" onChange={importData} className="hidden" />
-          </label>
-          <button 
-            onClick={exportData}
-            className="p-4 rounded-2xl text-gray-300 hover:text-[#5A5A40] transition-all"
-            title="Export Data"
-          >
-            <Download className="w-6 h-6" />
-          </button>
-        </div>
-      </aside>
+        <button 
+          onClick={() => setIsMenuOpen(!isMenuOpen)}
+          className={cn(
+            "w-16 h-16 rounded-full flex items-center justify-center shadow-2xl transition-all duration-500",
+            isMenuOpen ? "bg-white text-[#5A5A40] rotate-90" : "bg-[#5A5A40] text-white"
+          )}
+        >
+          {isMenuOpen ? <X className="w-8 h-8" /> : <Menu className="w-8 h-8" />}
+        </button>
+      </div>
 
       {/* Main Content */}
-      <main className="pl-20 md:pl-24 min-h-screen">
+      <main className="min-h-screen pb-32">
         {/* Header */}
         <header className="bg-white/80 backdrop-blur-md sticky top-0 z-40 px-6 md:px-12 py-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -415,13 +432,9 @@ export default function App() {
                       animate={{ opacity: 1, y: 0 }}
                       key={product.id}
                       onClick={() => addToCart(product)}
-                      className="group bg-white rounded-[32px] p-5 md:p-6 cursor-pointer hover:shadow-xl hover:shadow-[#5A5A40]/5 transition-all duration-500 border border-transparent hover:border-[#F5F5F0]"
+                      className="group bg-white rounded-[32px] p-6 md:p-8 cursor-pointer hover:shadow-xl hover:shadow-[#5A5A40]/5 transition-all duration-500 border border-transparent hover:border-[#F5F5F0]"
                     >
-                      <div className="aspect-square bg-[#F5F5F0] rounded-2xl mb-4 md:mb-6 flex items-center justify-center group-hover:scale-95 transition-transform duration-500 overflow-hidden relative">
-                        <Package className="w-8 h-8 md:w-10 md:h-10 text-[#5A5A40]/20" />
-                        <div className="absolute inset-0 bg-[#5A5A40]/0 group-hover:bg-[#5A5A40]/5 transition-colors" />
-                      </div>
-                      <h3 className="font-bold text-[#1a1a1a] text-sm md:text-base mb-1 line-clamp-1">{product.name}</h3>
+                      <h3 className="font-bold text-[#1a1a1a] text-lg md:text-xl mb-1 line-clamp-1">{product.name}</h3>
                       <p className="text-[#5A5A40] font-serif italic text-xs mb-3">{product.category}</p>
                       <div className="flex items-center justify-between">
                         <span className="font-black text-sm md:text-lg">{formatCurrency(product.price)}</span>

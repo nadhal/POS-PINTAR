@@ -84,6 +84,34 @@ npm run dev
 Buka browser di HP Anda (Chrome/Edge), lalu akses:
 `http://localhost:3000`
 
+## Solusi Error di Termux (esbuild/ELF magic)
+
+Jika Anda menemui error `bad ELF magic` saat `npm install`, gunakan **Solusi Terakhir** ini:
+
+1. **Hapus folder lama**:
+   ```bash
+   rm -rf node_modules package-lock.json
+   ```
+2. **Instal esbuild sistem**:
+   ```bash
+   pkg update && pkg install esbuild
+   ```
+   *Catatan: Pastikan versi di `package.json` (bagian `"esbuild": "..."`) sama dengan versi yang terinstal di Termux (cek dengan `esbuild --version`).*
+
+3. **Instal proyek (abaikan script error)**:
+   ```bash
+   npm install --ignore-scripts
+   ```
+4. **Hubungkan esbuild secara manual**:
+   ```bash
+   mkdir -p node_modules/esbuild/bin
+   ln -sf $(which esbuild) node_modules/esbuild/bin/esbuild
+   ```
+5. **Jalankan**:
+   ```bash
+   npm run dev
+   ```
+
 ## Catatan Penting
 - **Penyimpanan**: Data disimpan di browser. Jika Anda menghapus "Clear Cache/Data" browser, data aplikasi akan hilang. Gunakan fitur **Export Data** secara rutin untuk keamanan.
 - **Bluetooth**: Fitur cetak Bluetooth memerlukan browser yang mendukung Web Bluetooth API (seperti Google Chrome, Microsoft Edge, atau Opera).

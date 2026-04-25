@@ -21,7 +21,7 @@ export class EscPos {
   }
 
   line(content: string = "") {
-    this.text(content + "\n");
+    this.text(content + "\r\n");
     return this;
   }
 
@@ -133,35 +133,68 @@ export class EscPos {
       .bold(true)
       .line(storeName)
       .size(1, 1)
-      .bold(false)
-      .line(address)
-      .line("=".repeat(32));
+      .bold(false);
+    
+    if (address) {
+      // Split address into lines if it's long
+      const words = address.split(" ");
+      let line = "";
+      for (const word of words) {
+        if ((line + word).length > 32) {
+          this.line(line.trim());
+          line = word + " ";
+        } else {
+          line += word + " ";
+        }
+      }
+      if (line) this.line(line.trim());
+    }
+    
+    this.line("=".repeat(32));
     return this;
   }
 
-  receiptOrderInfo(info: { name: string; phone?: string; receiptNo?: string }) {
+  receiptOrderInfo(info: { name: string; phone?: string; receiptNo?: string; timestamp?: number }) {
+    const time = info.timestamp ? new Date(info.timestamp) : new Date();
+    const dateStr = time.toLocaleDateString("id-ID");
+    const timeStr = time.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+
     this.align("left")
-      .bold(true).line("Informasi Pemesanan").bold(false)
-      .line(`Nama Pemesan   : ${info.name}`)
-      .line(`Nomor Telepon  : ${info.phone || "-"}`)
-      .line(`No. Unik Struk : ${info.receiptNo || "-"}`)
-      .line("-".repeat(32));
+      .line(`Tgl: ${dateStr} ${timeStr}`)
+      .line(`No : ${info.receiptNo || "-"}`)
+      .line(`Plg: ${info.name || "Pelanggan"}`)
+      if (info.phone && info.phone !== "-") {
+        this.line(`Tel: ${info.phone}`);
+      }
+    this.line("-".repeat(32));
     return this;
   }
 
   receiptItemHeader() {
     this.align("left")
-      .bold(true)
-      .line("Nama Item       Jml    Harga")
-      .bold(false);
+      .line("Item             Qty       Sub")
+      .line("-".repeat(32));
     return this;
   }
 
   receiptItem(name: string, qty: number, price: number) {
-    const namePart = name.padEnd(16).substring(0, 16);
-    const qtyPart = qty.toString().padStart(3) + "x";
-    const pricePart = price.toLocaleString().padStart(10);
-    this.align("left").line(`${namePart} ${qtyPart} ${pricePart}`);
+    // Layout: 32 columns
+    // Name: 16 chars
+    // Qty: 4 chars
+    // Sub: 12 chars
+    
+    const formattedPrice = (qty * price).toLocaleString("id-ID");
+    
+    // If name is too long, print it in its own line first
+    if (name.length > 16) {
+      this.line(name);
+      this.line(" ".repeat(16) + qty.toString().padStart(4) + formattedPrice.padStart(12));
+    } else {
+      const namePart = name.padEnd(16);
+      const qtyPart = qty.toString().padStart(4);
+      const totalPart = formattedPrice.padStart(12);
+      this.line(`${namePart}${qtyPart}${totalPart}`);
+    }
     return this;
   }
 
@@ -173,91 +206,226 @@ export class EscPos {
     rounding: number; 
     grandTotal: number;
     paymentMethod?: string;
-  }) {
+  }, pb1Rate: number = 10) {
     this.align("left")
       .line("-".repeat(32))
-      .line(`Total Item      ${(data.totalItems || 0).toString().padStart(3)}    ${data.total.toLocaleString().padStart(10)}`)
-      .line("-".repeat(32))
-      .bold(true).line("Total").bold(false)
-      .line(`Subtotal        ${data.total.toLocaleString().padStart(16)}`)
-      .line(`SC              ${data.sc.toLocaleString().padStart(16)}`)
-      .line(`PB1             ${data.pb1.toLocaleString().padStart(16)}`)
-      .line(`Rounding Total  ${data.rounding.toLocaleString().padStart(16)}`)
-      .line("-".repeat(32))
+      .line(`Subtotal`.padEnd(16) + data.total.toLocaleString("id-ID").padStart(16));
+    
+    if (data.sc > 0) {
+      this.line(`Svc Charge`.padEnd(16) + data.sc.toLocaleString("id-ID").padStart(16));
+    }
+    
+    this.line(`PB1 (${pb1Rate}%)`.padEnd(16) + data.pb1.toLocaleString("id-ID").padStart(16));
+    
+    if (data.rounding !== 0) {
+      this.line(`Rounding`.padEnd(16) + data.rounding.toLocaleString("id-ID").padStart(16));
+    }
+    
+    this.line("-".repeat(32))
       .bold(true)
-      .line(`Grand Total     ${data.grandTotal.toLocaleString().padStart(16)}`)
+      .size(1, 2)
+      .line(`TOTAL`.padEnd(12) + data.grandTotal.toLocaleString("id-ID").padStart(20))
+      .size(1, 1)
       .bold(false)
-      .line("(Termasuk Pajak)")
       .line("-".repeat(32))
-      .line(`Metode Pembayaran: ${data.paymentMethod || "Tunai"}`)
-      .feed(2)
       .align("center")
       .line("Terima Kasih")
-      .line("Selamat Belanja Kembali")
+      .line("Selamat Datang Kembali")
       .feed(4);
     return this;
   }
 }
 
 /**
- * Bluetooth Printer Connection Helper
+ * Common Bluetooth Printer Services UUIDs
  */
-export async function printToBluetooth(buffer: Uint8Array) {
+const COMMON_PRINTER_SERVICES = [
+  "000018f0-0000-1000-8000-00805f9b34fb", // RPOS / RPP-02N
+  "0000ff00-0000-1000-8000-00805f9b34fb", // Milestone / MTP-II
+  "0000ae01-0000-1000-8000-00805f9b34fb", // BlueBamboo
+  "0000e7e1-0000-1000-8000-00805f9b34fb", // Xprinter
+  "00001101-0000-1000-8000-00805f9b34fb", // SPP (Classic)
+  "49535343-fe7d-4ae5-8fa9-9fafd205e455", // ISSC
+  "e7e1a33e-4959-4e33-a7ed-ea312e7485d7", // Zebra
+  "0000fec7-0000-1000-8000-00805f9b34fb", // Joyosoft
+  "0000fee7-0000-1000-8000-00805f9b34fb", // Joyosoft alternative
+  "0000af01-0000-1000-8000-00805f9b34fb", // Generic
+  "0000fee9-0000-1000-8000-00805f9b34fb", // Generic
+  "00001800-0000-1000-8000-00805f9b34fb", // Generic Access
+  "00001801-0000-1000-8000-00805f9b34fb", // Generic Attribute
+  "0000ffe0-0000-1000-8000-00805f9b34fb", // Common BLE
+  "0000ffe1-0000-1000-8000-00805f9b34fb", // Common BLE
+];
+
+/**
+ * Bluetooth Printer Connection Helpers
+ */
+export async function requestPrinter() {
   const nav = navigator as any;
   if (!nav.bluetooth) {
-    throw new Error("Bluetooth tidak didukung di browser ini. Gunakan Chrome atau Edge.");
+    throw new Error("Bluetooth tidak didukung di browser ini. Gunakan Chrome atau Edge (Android/Windows). Browser iOS/Safari tidak mendukung Web Bluetooth.");
   }
 
   try {
-    // Some printers use different UUIDs, so we try to accept all devices
-    // and list common printer service UUIDs in optionalServices.
+    // We use acceptAllDevices for maximum compatibility since printer names and services vary wildly
     const device = await nav.bluetooth.requestDevice({
       acceptAllDevices: true,
-      optionalServices: ["000018f0-0000-1000-8000-00805f9b34fb", "00001101-0000-1000-8000-00805f9b34fb"],
+      optionalServices: COMMON_PRINTER_SERVICES,
     });
+    
+    return device;
+  } catch (error: any) {
+    if (error.name === "NotFoundError" || error.message.includes("cancelled")) {
+      throw new Error("Pencetakan dibatalkan.");
+    }
+    throw error;
+  }
+}
 
+export async function printToBluetooth(device: any, buffer: Uint8Array) {
+  let server;
+  let retryCount = 0;
+  const maxRetries = 3;
+
+  const connectWithRetry = async (): Promise<any> => {
+    try {
+      console.log(`Connecting to GATT server (attempt ${retryCount + 1})...`);
+      // If already connected, disconnect first to ensure a clean state
+      if (device.gatt.connected) {
+        console.log("Device already connected, disconnecting first...");
+        await device.gatt.disconnect();
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      return await device.gatt.connect();
+    } catch (e: any) {
+      console.warn(`Connection attempt ${retryCount + 1} failed:`, e);
+      if (retryCount < maxRetries) {
+        retryCount++;
+        const delay = 1000 * retryCount;
+        console.log(`Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return connectWithRetry();
+      }
+      throw e;
+    }
+  };
+
+  try {
     if (!device.gatt) {
       throw new Error("GATT tidak tersedia pada perangkat ini.");
     }
 
-    const server = await device.gatt.connect();
+    server = await connectWithRetry();
     
-    // Try to find the printer service
+    // Give the printer a moment to settle after connecting
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
+    if (!server.connected) {
+      throw new Error("GATT Server gagal tersambung.");
+    }
+    
     let service;
-    try {
-      service = await server.getPrimaryService("000018f0-0000-1000-8000-00805f9b34fb");
-    } catch (e) {
-      // Fallback to another common SPP UUID if the first one fails
-      service = await server.getPrimaryService("00001101-0000-1000-8000-00805f9b34fb");
+    let characteristic;
+
+    console.log("Discovering services...");
+
+    // 1. Try common services first
+    for (const serviceUuid of COMMON_PRINTER_SERVICES) {
+      try {
+        service = await server.getPrimaryService(serviceUuid);
+        if (service) {
+          const characteristics = await service.getCharacteristics();
+          characteristic = characteristics.find((c: any) => c.properties.write || c.properties.writeWithoutResponse);
+          if (characteristic) break;
+        }
+      } catch (e) {
+        // Skip and try next
+      }
     }
 
-    if (!service) {
-      throw new Error("Layanan printer tidak ditemukan.");
+    // 2. Fallback: Search in ALL primary services and ALL characteristics
+    if (!characteristic) {
+      console.log("Searching in all primary services...");
+      try {
+        const services = await server.getPrimaryServices();
+        for (const s of services) {
+          console.log(`Checking service: ${s.uuid}`);
+          try {
+            const characteristics = await s.getCharacteristics();
+            for (const c of characteristics) {
+              console.log(`  Characteristic: ${c.uuid} (props: ${JSON.stringify(c.properties)})`);
+              if (c.properties.write || c.properties.writeWithoutResponse) {
+                characteristic = c;
+                service = s;
+                console.log(`Found suitable characteristic in service ${s.uuid}: ${c.uuid}`);
+                break;
+              }
+            }
+            if (characteristic) break;
+          } catch (e) {
+            console.warn(`Failed to get characteristics for service ${s.uuid}`);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to get all primary services", e);
+      }
     }
-
-    // Get all characteristics and find one that supports 'write'
-    const characteristics = await service.getCharacteristics();
-    const characteristic = characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse);
 
     if (!characteristic) {
-      throw new Error("Karakteristik penulisan tidak ditemukan.");
+      throw new Error("Layanan atau Karakteristik printer tidak ditemukan. Pastikan printer dalam mode siap (Ready).");
     }
 
-    // Send in chunks (some printers have small buffers)
-    const chunkSize = 20;
+    // Explicit Initialize & Clear
+    await characteristic.writeValue(new Uint8Array([0x1b, 0x40]));
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Send in chunks (some printers have small buffers/limitations)
+    const chunkSize = 20; // 20 bytes is standard for basic BLE MTU
     for (let i = 0; i < buffer.length; i += chunkSize) {
       const chunk = buffer.slice(i, i + chunkSize);
-      await characteristic.writeValue(chunk);
+      try {
+        if (characteristic.properties.writeWithoutResponse) {
+          await characteristic.writeValueWithoutResponse(chunk);
+          // Wait longer for withoutResponse to avoid overflowing buffer
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } else {
+          await characteristic.writeValue(chunk);
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+      } catch (e) {
+        console.warn("Write chunk failure, trying fallback writeValue:", e);
+        try {
+          await characteristic.writeValue(chunk);
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (innerE) {
+          console.error("Total write failure", innerE);
+          throw new Error("Gagal mengirim data ke printer. Coba matikan dan nyalakan ulang printer.");
+        }
+      }
     }
 
-    // Small delay before disconnect to ensure buffer is processed
-    await new Promise(resolve => setTimeout(resolve, 500));
-    await server.disconnect();
+    // Small delay before disconnect to ensure buffer is processed by printer
+    await new Promise(resolve => setTimeout(resolve, 1500));
   } catch (error: any) {
     console.error("Bluetooth print error:", error);
-    if (error.name === "NotFoundError") {
-      throw new Error("Pencetakan dibatalkan atau perangkat tidak ditemukan.");
+    if (error.message.includes("GATT Server is disconnected")) {
+      throw new Error("Koneksi terputus tiba-tiba. Pastikan printer dekat dan baterai cukup.");
     }
-    throw new Error(`Gagal mencetak: ${error.message}`);
+    if (error.message.includes("User cancelled") || error.message.includes("cancelled")) {
+      throw new Error("Pencetakan dibatalkan.");
+    }
+    if (error.message.includes("Connection attempt failed")) {
+      throw new Error("Koneksi gagal. Coba matikan dan nyalakan ulang Bluetooth di HP/Laptop serta Printer.");
+    }
+    throw new Error(`Gagal mencetak: ${error.message} (Pastikan printer mendukung BLE. Web Bluetooth tidak mendukung printer Bluetooth Classic/SPP)`);
+  } finally {
+    if (server && server.connected) {
+      try {
+        await server.disconnect();
+        console.log("GATT Server disconnected successfully");
+      } catch (e) {
+        console.warn("Error during disconnect:", e);
+      }
+    }
   }
 }

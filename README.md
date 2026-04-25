@@ -3,12 +3,17 @@
 Aplikasi Point of Sale (Kasir) yang dirancang untuk bekerja sepenuhnya secara offline menggunakan penyimpanan lokal browser (LocalStorage) dan mendukung pencetakan struk via Bluetooth (ESC/POS).
 
 ## Fitur Utama
-- **Offline First**: Tidak memerlukan koneksi internet untuk operasional harian.
-- **No Login**: Langsung pakai tanpa perlu membuat akun.
-- **PWA Ready**: Bisa diinstal di HP atau Komputer sebagai aplikasi mandiri.
-- **Bluetooth Printing**: Mendukung printer thermal Bluetooth 58mm.
-- **Manajemen Produk**: Kelola stok, harga, dan kategori menu.
-- **Backup & Restore**: Ekspor data ke file JSON untuk cadangan atau pindah perangkat.
+- **Keamanan Admin (PIN)**: Melindungi menu sensitif (Dashboard, Produk, Histori, Setelan) dengan sistem PIN 4-digit untuk mencegah akses tidak sah oleh staf.
+- **Lupa PIN (Recovery)**: Fitur pemulihan menggunakan Pertanyaan Keamanan untuk me-reset akses jika PIN terlupa.
+- **Dashboard & Statistik**: Pantau omzet harian, jumlah transaksi, dan produk terlaris melalui grafik interaktif.
+- **Offline First**: Bekerja sepenuhnya tanpa internet menggunakan LocalStorage browser.
+- **Bluetooth Printing**: Cetak struk belanja secara instan ke printer thermal Bluetooth (ESC/POS).
+- **Manajemen Produk & Stok**: Kelola harga, stok, gambar, dan kategori produk dengan mudah.
+- **Manajemen Kategori**: Memudahkan navigasi produk saat transaksi berlangsung.
+- **Histori Transaksi**: Lihat kembali riwayat penjualan dengan detail item dan metode pembayaran.
+- **Backup & Restore**: Ekspor dan impor data (JSON) untuk keamanan ekstra atau pindah perangkat.
+- **Custom Branding**: Atur nama toko, alamat, logo, serta header dan footer pada struk.
+- **PWA Ready**: Dapat diinstal di Android, iOS, atau PC sebagai aplikasi mandiri.
 
 ## Cara Install di Localhost
 

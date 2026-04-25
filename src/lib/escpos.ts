@@ -74,7 +74,7 @@ export class EscPos {
   }
 
   // Helper for receipt formatting
-  async receiptHeader(storeName: string, address: string, logoUrl?: string) {
+  async receiptHeader(storeName: string, address: string, phone: string, logoUrl?: string) {
     this.align("center");
 
     if (logoUrl) {
@@ -90,8 +90,7 @@ export class EscPos {
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
         if (ctx) {
-          // Resize to fit printer (max width ~384px for 58mm)
-          const maxWidth = 160; // Small logo
+          const maxWidth = 160;
           const scale = maxWidth / img.width;
           const width = maxWidth;
           const height = Math.floor(img.height * scale);
@@ -112,7 +111,6 @@ export class EscPos {
               const b = pixels[idx + 2];
               const alpha = pixels[idx + 3];
               
-              // Simple thresholding
               const brightness = (r + g + b) / 3;
               if (alpha > 128 && brightness < 128) {
                 const byteIdx = y * Math.ceil(width / 8) + Math.floor(x / 8);
@@ -127,6 +125,8 @@ export class EscPos {
       } catch (e) {
         console.error("Failed to load logo:", e);
       }
+    } else {
+      this.line("=".repeat(32));
     }
 
     this.size(2, 2)
@@ -136,7 +136,6 @@ export class EscPos {
       .bold(false);
     
     if (address) {
-      // Split address into lines if it's long
       const words = address.split(" ");
       let line = "";
       for (const word of words) {
@@ -149,6 +148,10 @@ export class EscPos {
       }
       if (line) this.line(line.trim());
     }
+
+    if (phone && phone !== "-") {
+      this.line(`Telp: ${phone}`);
+    }
     
     this.line("=".repeat(32));
     return this;
@@ -156,45 +159,42 @@ export class EscPos {
 
   receiptOrderInfo(info: { name: string; phone?: string; receiptNo?: string; timestamp?: number }) {
     const time = info.timestamp ? new Date(info.timestamp) : new Date();
-    const dateStr = time.toLocaleDateString("id-ID");
-    const timeStr = time.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+    const dateStr = time.toLocaleDateString("id-ID", { day: '2-digit', month: '2-digit', year: 'numeric' });
 
     this.align("left")
-      .line(`Tgl: ${dateStr} ${timeStr}`)
-      .line(`No : ${info.receiptNo || "-"}`)
-      .line(`Plg: ${info.name || "Pelanggan"}`)
+      .line(`No. Faktur: ${info.receiptNo || "-"}`)
+      .line(`Tanggal   : ${dateStr}`)
+      .line(`Nama : ${info.name || "Guest"}`);
       if (info.phone && info.phone !== "-") {
-        this.line(`Tel: ${info.phone}`);
+        this.line(`Telp : ${info.phone}`);
       }
     this.line("-".repeat(32));
     return this;
   }
 
   receiptItemHeader() {
-    this.align("left")
-      .line("Item             Qty       Sub")
-      .line("-".repeat(32));
+    this.align("left");
     return this;
   }
 
   receiptItem(name: string, qty: number, price: number) {
+    const total = qty * price;
+    const formattedTotal = total.toLocaleString("id-ID");
+    const label = `${name} (${qty}x)`;
+    
     // Layout: 32 columns
-    // Name: 16 chars
-    // Qty: 4 chars
-    // Sub: 12 chars
+    // Label can use up to 20 chars, then space, then price
+    const priceStr = formattedTotal.padStart(10);
+    const labelPart = label.padEnd(21);
     
-    const formattedPrice = (qty * price).toLocaleString("id-ID");
-    
-    // If name is too long, print it in its own line first
-    if (name.length > 16) {
-      this.line(name);
-      this.line(" ".repeat(16) + qty.toString().padStart(4) + formattedPrice.padStart(12));
+    if (label.length > 21) {
+      this.line(label);
+      this.line(" ".repeat(21) + priceStr);
     } else {
-      const namePart = name.padEnd(16);
-      const qtyPart = qty.toString().padStart(4);
-      const totalPart = formattedPrice.padStart(12);
-      this.line(`${namePart}${qtyPart}${totalPart}`);
+      this.line(`${labelPart}${priceStr}`);
     }
+    
+    this.line(`    @${price.toLocaleString("id-ID")}`);
     return this;
   }
 
@@ -204,33 +204,43 @@ export class EscPos {
     sc: number; 
     pb1: number; 
     rounding: number; 
+    discount?: number;
     grandTotal: number;
     paymentMethod?: string;
-  }, pb1Rate: number = 10) {
+  }, footerMessage?: string) {
     this.align("left")
-      .line("-".repeat(32))
-      .line(`Subtotal`.padEnd(16) + data.total.toLocaleString("id-ID").padStart(16));
+      .line("-".repeat(32));
     
-    if (data.sc > 0) {
-      this.line(`Svc Charge`.padEnd(16) + data.sc.toLocaleString("id-ID").padStart(16));
+    if (data.discount && data.discount > 0) {
+      this.line(`DISKON:`.padEnd(16) + `-Rp ${data.discount.toLocaleString("id-ID")}`.padStart(16));
     }
-    
-    this.line(`PB1 (${pb1Rate}%)`.padEnd(16) + data.pb1.toLocaleString("id-ID").padStart(16));
-    
-    if (data.rounding !== 0) {
-      this.line(`Rounding`.padEnd(16) + data.rounding.toLocaleString("id-ID").padStart(16));
-    }
-    
-    this.line("-".repeat(32))
-      .bold(true)
-      .size(1, 2)
-      .line(`TOTAL`.padEnd(12) + data.grandTotal.toLocaleString("id-ID").padStart(20))
-      .size(1, 1)
-      .bold(false)
+
+    this.line(`PAYMENT: ${data.paymentMethod?.toUpperCase() || "TUNAI"}`)
+      .line(`TOTAL ITEM: ${data.totalItems || 0}`)
+      .line(`TOTAL AKHIR:`.padEnd(16) + `Rp ${data.grandTotal.toLocaleString("id-ID")}`.padStart(16))
       .line("-".repeat(32))
       .align("center")
-      .line("Terima Kasih")
-      .line("Selamat Datang Kembali")
+      .bold(true);
+      
+    if (footerMessage) {
+      const words = footerMessage.split(" ");
+      let line = "";
+      for (const word of words) {
+        if ((line + word).length > 32) {
+          this.line(line.trim());
+          line = word + " ";
+        } else {
+          line += word + " ";
+        }
+      }
+      if (line) this.line(line.trim());
+    } else {
+      this.line("TERIMA KASIH")
+        .line("SELAMAT BELANJA KEMBALI");
+    }
+      
+    this.bold(false)
+      .line("=".repeat(32))
       .feed(4);
     return this;
   }

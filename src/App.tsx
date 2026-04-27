@@ -43,7 +43,9 @@ import {
   Briefcase,
   Users,
   Percent,
-  Star
+  Star,
+  CheckCircle,
+  RefreshCw
 } from "lucide-react";
 import { cn, formatCurrency } from "./lib/utils";
 import { EscPos, requestPrinter, printToBluetooth } from "./lib/escpos";
@@ -61,6 +63,48 @@ interface Product {
   category: string;
   createdAt: number;
 }
+
+// Global UI Utilities
+const playBeep = (type: 'success' | 'click' | 'error' = 'click') => {
+  try {
+    const context = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const oscillator = context.createOscillator();
+    const gainNode = context.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(context.destination);
+
+    if (type === 'success') {
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, context.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(440, context.currentTime + 0.1);
+      gainNode.gain.setValueAtTime(0.1, context.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.2);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.2);
+    } else if (type === 'error') {
+      oscillator.type = 'sawtooth';
+      oscillator.frequency.setValueAtTime(110, context.currentTime);
+      gainNode.gain.setValueAtTime(0.1, context.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0, context.currentTime + 0.3);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.3);
+    } else {
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(1200, context.currentTime);
+      gainNode.gain.setValueAtTime(0.05, context.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.05);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.05);
+    }
+
+    if (navigator.vibrate) {
+      navigator.vibrate(10);
+    }
+  } catch (e) {
+    // Silent fail if audio context is blocked or not supported
+  }
+};
 
 interface CartItem extends Product {
   quantity: number;
@@ -85,6 +129,7 @@ interface CustomerInfo {
   phone: string;
   receiptNo: string;
   paymentMethod: "Tunai" | "QRIS";
+  customDate?: string;
 }
 
 interface Transaction {
@@ -247,6 +292,34 @@ const ProductCard = ({
 export default function App() {
   const [products, setProducts] = useState<Product[]>(() => getLocal(STORAGE_KEYS.PRODUCTS, []));
   const [transactions, setTransactions] = useState<Transaction[]>(() => getLocal(STORAGE_KEYS.TRANSACTIONS, []));
+
+  // PWA Install Prompt State
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
+
+  useEffect(() => {
+    setIsStandalone(window.matchMedia('(display-mode: standalone)').matches);
+
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
+  };
   const [cart, setCart] = useState<CartItem[]>([]);
   const [view, setView] = useState<"sales" | "products" | "settings" | "history" | "dashboard">("sales");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -262,6 +335,7 @@ export default function App() {
   const [cartDiscount, setCartDiscount] = useState(0);
   const [isPrinting, setIsPrinting] = useState(false);
   const [btDevice, setBtDevice] = useState<any>(null);
+  const [settingsBtError, setSettingsBtError] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings>(() => {
     const defaults = {
       pb1Rate: 10,
@@ -377,9 +451,7 @@ export default function App() {
   useEffect(() => {
     if ((products?.length || 0) === 0) {
       const demoProducts = [
-        { id: "1", name: "MIE GACOAN", price: 11364, stock: 50, category: "Makanan", createdAt: Date.now() },
-        { id: "2", name: "UDANG KEJU", price: 10455, stock: 30, category: "Makanan", createdAt: Date.now() - 1000 },
-        { id: "3", name: "THAI TEA", price: 9091, stock: 40, category: "Minuman", createdAt: Date.now() - 2000 }
+        { id: "1", name: "THAI TEA", price: 10000, stock: 50, category: "Minuman", createdAt: Date.now() }
       ];
       setProducts(demoProducts);
     }
@@ -387,6 +459,7 @@ export default function App() {
 
   // Cart Logic
   const addToCart = (product: Product, quantity: number = 1) => {
+    playBeep('click');
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
@@ -406,6 +479,7 @@ export default function App() {
     setCart(prev => {
       return prev.map(item => {
         if (item.id === productId) {
+          playBeep('click');
           return { ...item, quantity: item.quantity + delta };
         }
         return item;
@@ -427,8 +501,8 @@ export default function App() {
     setCartDiscount(0);
   };
 
-  const generateReceiptNo = () => {
-    const now = new Date();
+  const generateReceiptNo = (customDate?: string) => {
+    const now = customDate ? new Date(customDate) : new Date();
     const dateStr = now.getFullYear().toString().slice(-2) + 
                     (now.getMonth() + 1).toString().padStart(2, '0') + 
                     now.getDate().toString().padStart(2, '0');
@@ -440,7 +514,8 @@ export default function App() {
     name: "",
     phone: "",
     receiptNo: generateReceiptNo(),
-    paymentMethod: "Tunai" as "Tunai" | "QRIS"
+    paymentMethod: "Tunai" as "Tunai" | "QRIS",
+    customDate: new Date().toISOString().split('T')[0]
   });
 
   const cartTotal = useMemo(() => cart.reduce((sum, item) => sum + (item.price * item.quantity), 0), [cart]);
@@ -463,10 +538,15 @@ export default function App() {
       phone: info.phone.trim() || "-"
     };
 
+    const now = new Date();
+    const transactionTimestamp = info.customDate 
+      ? new Date(`${info.customDate}T${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`).getTime() || Date.now()
+      : Date.now();
+
     const newTransaction: Transaction = {
-      id: Date.now().toString(),
+      id: transactionTimestamp.toString() + Math.random().toString(36).substr(2, 5),
       receiptNo: finalInfo.receiptNo,
-      timestamp: Date.now(),
+      timestamp: transactionTimestamp,
       items: [...cart],
       subtotal: cartTotal,
       sc,
@@ -478,6 +558,7 @@ export default function App() {
     };
 
     setTransactions(prev => [newTransaction, ...prev]);
+    playBeep('success');
 
     // Update stock locally
     setProducts(prev => prev.map(p => {
@@ -493,12 +574,68 @@ export default function App() {
       ...finalInfo,
       name: "",
       phone: "",
-      receiptNo: generateReceiptNo()
+      receiptNo: generateReceiptNo(),
+      customDate: new Date().toISOString().split('T')[0]
     });
   };
 
   const receiptRef = useRef<HTMLDivElement>(null);
   const [reprintTransaction, setReprintTransaction] = useState<Transaction | null>(null);
+  const [btError, setBtError] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input/textarea
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+        if (e.key === 'Escape') {
+          (e.target as HTMLElement).blur();
+        }
+        return;
+      }
+
+      switch (e.key.toLowerCase()) {
+        case 'f':
+        case '/':
+          e.preventDefault();
+          searchInputRef.current?.focus();
+          break;
+        case 'enter':
+          if (cart.length > 0 && view === 'sales') {
+            e.preventDefault();
+            if (!isCartOpen) {
+              setIsCartOpen(true);
+              playBeep('click');
+            } else if (!isPrinting) {
+              handlePrint();
+            }
+          }
+          break;
+        case 'escape':
+          if (isCartOpen) setIsCartOpen(false);
+          if (isMenuOpen) setIsMenuOpen(false);
+          if (isModalOpen) setIsModalOpen(false);
+          if (reprintTransaction) setReprintTransaction(null);
+          break;
+        case 'd':
+          handleViewChange('dashboard');
+          break;
+        case 's':
+          handleViewChange('sales');
+          break;
+        case 'p':
+          handleViewChange('products');
+          break;
+        case 'h':
+          handleViewChange('history');
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [view, isCartOpen, isMenuOpen, isModalOpen, cart.length, reprintTransaction]);
 
   // Product CRUD
   const handleSaveProduct = (e: React.FormEvent<HTMLFormElement>) => {
@@ -542,44 +679,49 @@ export default function App() {
     const txGrandTotal = isReprint ? tx?.grandTotal : grandTotal;
 
     if ((items?.length || 0) === 0) return;
+    setBtError(null);
     
-    setIsPrinting(true);
-    try {
-      let device = btDevice;
-      if (!device) {
-        try {
-          device = await requestPrinter();
-          setBtDevice(device);
-          device.addEventListener('gattserverdisconnected', () => {
-            setBtDevice(null);
-          });
-        } catch (pickErr: any) {
-          setIsPrinting(false);
-          // Only alert if it's a real error, not just a cancellation
-          if (!pickErr.message.includes("cancelled") && !pickErr.message.includes("dibatalkan")) {
-            alert(`Gagal menyambung: ${pickErr.message}`);
-          }
-          return;
+    let device = btDevice;
+    if (!device) {
+      try {
+        device = await requestPrinter();
+        setBtDevice(device);
+        device.addEventListener('gattserverdisconnected', () => {
+          setBtDevice(null);
+        });
+      } catch (pickErr: any) {
+        if (!pickErr.message.includes("Dibatalkan")) {
+          setBtError(pickErr.message);
         }
+        return;
       }
+    }
 
-      // Update status for user
+    setIsPrinting(true);
+    let printSuccess = false;
+    let finalCustomerInfo = {
+      name: (info?.name || "").trim() || "cust",
+      phone: (info?.phone || "").trim() || "-",
+      receiptNo: info?.receiptNo || customerInfo.receiptNo,
+      paymentMethod: info?.paymentMethod || customerInfo.paymentMethod
+    };
+
+    try {
+
       console.log("Connecting to printer...");
       
-      const finalCustomerInfo = {
-        name: (info?.name || "").trim() || "cust",
-        phone: (info?.phone || "").trim() || "-",
-        receiptNo: info?.receiptNo || customerInfo.receiptNo,
-        paymentMethod: info?.paymentMethod || customerInfo.paymentMethod
-      };
-
       const escpos = new EscPos();
       await escpos.receiptHeader(settings.storeName, settings.storeAddress, settings.storePhone, settings.logoUrl);
+      const txNow = new Date();
+      const transactionTimestamp = info?.customDate 
+        ? new Date(`${info.customDate}T${txNow.getHours().toString().padStart(2, '0')}:${txNow.getMinutes().toString().padStart(2, '0')}:${txNow.getSeconds().toString().padStart(2, '0')}`).getTime() || Date.now()
+        : Date.now();
+
       escpos.receiptOrderInfo({
         name: finalCustomerInfo.name,
         phone: finalCustomerInfo.phone,
         receiptNo: finalCustomerInfo.receiptNo,
-        timestamp: isReprint ? tx?.timestamp : Date.now()
+        timestamp: isReprint ? tx?.timestamp : transactionTimestamp
       });
       if (isReprint) {
         escpos.align("center").bold(true).line("REPRINT STRUK").bold(false).align("left");
@@ -601,15 +743,23 @@ export default function App() {
 
       const buffer = escpos.getBuffer();
       await printToBluetooth(device, buffer);
+      printSuccess = true;
 
-      if (!isReprint) {
-        completeTransaction(finalCustomerInfo);
-      }
     } catch (err: any) {
       console.error("Print error:", err);
       alert(err.message || "Gagal mencetak struk.");
     } finally {
       setIsPrinting(false);
+      
+      if (!isReprint) {
+        if (printSuccess) {
+          completeTransaction(finalCustomerInfo);
+          setIsCartOpen(false);
+        } else if (window.confirm("Pencetakan gagal. Tetap selesaikan transaksi ini?")) {
+          completeTransaction(finalCustomerInfo);
+          setIsCartOpen(false);
+        }
+      }
     }
   };
 
@@ -672,6 +822,7 @@ export default function App() {
     
     if (window.confirm("Apakah cetak berhasil? Klik OK untuk selesaikan transaksi.")) {
       completeTransaction();
+      setIsCartOpen(false);
     }
   };
 
@@ -710,33 +861,60 @@ export default function App() {
     const data = {
       products,
       settings,
-      version: "1.0",
+      transactions,
+      version: "1.1",
       exportDate: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `pos_backup_${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `pos_full_backup_${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    playBeep('success');
   };
 
   const importData = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (!confirm("Peringatan: Mengimpor data akan menimpa SEMUA data yang ada (Produk, Histori, & Setelan). Lanjutkan?")) {
+      e.target.value = '';
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
-        if (data.products) setProducts(data.products);
-        if (data.settings) setSettings(data.settings);
-        alert("Data berhasil diimpor!");
+        if (data.products) {
+          setProducts(data.products);
+          setLocal(STORAGE_KEYS.PRODUCTS, data.products);
+        }
+        if (data.settings) {
+          setSettings(data.settings);
+          setLocal(STORAGE_KEYS.SETTINGS, data.settings);
+        }
+        if (data.transactions) {
+          setTransactions(data.transactions);
+          setLocal(STORAGE_KEYS.TRANSACTIONS, data.transactions);
+        }
+        alert("Data berhasil diimpor! Aplikasi akan memuat ulang data.");
+        playBeep('success');
       } catch (err) {
         alert("Gagal mengimpor data. Format file tidak valid.");
       }
     };
     reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleClearAllData = () => {
+    if (confirm("BAHAYA: Anda akan menghapus SELURUH data aplikasi (Produk, Transaksi, dan Setelan). Tindakan ini tidak dapat dibatalkan.\n\nApakah Anda benar-benar yakin?")) {
+      localStorage.clear();
+      window.location.reload();
+    }
   };
 
   const filteredProducts = (products || []).filter(p => {
@@ -939,6 +1117,22 @@ export default function App() {
       </AnimatePresence>
       {/* Bottom Navigation Menu */}
       <div className="fixed bottom-6 md:bottom-8 left-4 right-4 z-[60] flex items-center justify-end gap-3 pointer-events-none">
+        {/* Shortcuts Hint - Desktop Only */}
+        <div className="hidden lg:flex items-center gap-3 bg-white/20 backdrop-blur-md px-5 py-3 rounded-full border border-white/30 text-[9px] font-black uppercase tracking-widest text-[#5A5A40]/60 mr-auto transition-all hover:opacity-100 opacity-30 hover:bg-white/40">
+          <span className="text-[#5A5A40]">PINAS PINTAR SHORTCUTS:</span>
+          <div className="flex items-center gap-1.5">
+            <kbd className="bg-white/80 px-2 py-1 rounded shadow-sm border border-gray-100">F</kbd> <span>Cari</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <kbd className="bg-white/80 px-2 py-1 rounded shadow-sm border border-gray-100">ENTER</kbd> <span>Bayar</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <kbd className="bg-white/80 px-2 py-1 rounded shadow-sm border border-gray-100">D</kbd> <span>Statistik</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <kbd className="bg-white/80 px-2 py-1 rounded shadow-sm border border-gray-100">S</kbd> <span>Kasir</span>
+          </div>
+        </div>
         {/* Floating Payment Bar moved here and integrated with menu positioning */}
         <AnimatePresence>
           {view === "sales" && cart.length > 0 && (
@@ -1068,6 +1262,41 @@ export default function App() {
 
       {/* Main Content */}
       <main className="min-h-screen pb-32">
+        {/* PWA Install Banner */}
+        <AnimatePresence>
+          {deferredPrompt && !isStandalone && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="bg-[#5A5A40] text-white px-4 md:px-8 py-3 flex items-center justify-between overflow-hidden relative z-[45]"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+                  <Download className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-widest leading-none">Aplikasi Dapat Diinstal</p>
+                  <p className="text-[9px] text-white/70 mt-1">Gunakan POS PINTAR langsung dari layar utama HP Anda.</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleInstallClick}
+                  className="px-4 py-2 bg-white text-[#5A5A40] rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[#F5F5F0] transition-colors shadow-sm"
+                >
+                  Instal Sekarang
+                </button>
+                <button 
+                  onClick={() => setDeferredPrompt(null)}
+                  className="p-2 text-white/50 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
         {/* Header */}
         <header className="bg-white/80 backdrop-blur-md sticky top-0 z-40 px-4 md:px-8 py-4 md:py-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center justify-between">
@@ -1110,8 +1339,9 @@ export default function App() {
             <div className="relative group flex-1">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-[#5A5A40] transition-colors" />
               <input 
+                ref={searchInputRef}
                 type="text"
-                placeholder="Cari..."
+                placeholder="Cari... (Klik '/' atau 'f')"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full md:w-64 bg-[#F5F5F0] border-none rounded-2xl py-2.5 pl-11 pr-5 focus:ring-2 focus:ring-[#5A5A40] transition-all text-sm font-medium"
@@ -1126,29 +1356,45 @@ export default function App() {
               {/* Product Grid */}
               <div className="lg:col-span-10 grid grid-cols-1 md:grid-cols-12 gap-6">
                 <div className="md:col-span-10 lg:col-span-10">
-                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
-                    {filteredProducts.length > 0 ? (
-                      filteredProducts.map((product) => {
-                        const cartItem = cart.find(item => item.id === product.id);
-                        return (
-                          <ProductCard 
-                            key={product.id}
-                            product={product}
-                            onAdd={addToCart}
-                            onUpdateQty={updateQuantity}
-                            cartQty={cartItem?.quantity || 0}
-                          />
-                        );
-                      })
-                    ) : (
-                      <div className="col-span-full py-20 text-center">
-                        <div className="bg-[#F5F5F0] w-16 h-16 rounded-3xl flex items-center justify-center mx-auto mb-4">
-                          <Search className="w-6 h-6 text-gray-300" />
-                        </div>
-                        <p className="text-gray-400 font-serif italic">Produk tidak ditemukan</p>
-                      </div>
-                    )}
-                  </div>
+                  <motion.div 
+                    layout
+                    className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4"
+                  >
+                    <AnimatePresence mode="popLayout">
+                      {filteredProducts.length > 0 ? (
+                        filteredProducts.map((product, idx) => {
+                          const cartItem = cart.find(item => item.id === product.id);
+                          return (
+                            <motion.div
+                              key={product.id}
+                              initial={{ opacity: 0, y: 20 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, scale: 0.9 }}
+                              transition={{ delay: idx * 0.03 }}
+                            >
+                              <ProductCard 
+                                product={product}
+                                onAdd={addToCart}
+                                onUpdateQty={updateQuantity}
+                                cartQty={cartItem?.quantity || 0}
+                              />
+                            </motion.div>
+                          );
+                        })
+                      ) : (
+                        <motion.div 
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className="col-span-full py-20 text-center"
+                        >
+                          <div className="bg-[#F5F5F0] w-16 h-16 rounded-3xl flex items-center justify-center mx-auto mb-4">
+                            <Search className="w-6 h-6 text-gray-300" />
+                          </div>
+                          <p className="text-gray-400 font-serif italic">Produk tidak ditemukan</p>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
                 </div>
 
                 {/* Categories on the Right of Products */}
@@ -1201,6 +1447,10 @@ export default function App() {
                     cartDiscount={cartDiscount}
                     setCartDiscount={setCartDiscount}
                     discountAmount={discountAmount}
+                    generateReceiptNo={generateReceiptNo}
+                    completeTransaction={() => completeTransaction()}
+                    setIsCartOpen={setIsCartOpen}
+                    btError={btError}
                   />
                 </div>
               </div>
@@ -1325,6 +1575,57 @@ export default function App() {
             />
           ) : (
             <div className="max-w-2xl mx-auto space-y-6">
+              {/* PWA Section */}
+              {!isStandalone && (
+                <div className="bg-white rounded-[24px] md:rounded-[40px] p-5 md:p-10 shadow-sm border border-gray-50">
+                  <div className="mb-6">
+                    <h2 className="text-xl md:text-2xl font-serif font-black text-[#1a1a1a] flex items-center gap-3">
+                      <Monitor className="w-6 h-6 text-[#5A5A40]" />
+                      Aplikasi Mandiri (PWA)
+                    </h2>
+                    <p className="text-gray-400 text-xs mt-1 italic">Instalasi aplikasi di layar beranda</p>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div className="p-5 md:p-6 bg-[#5A5A40]/5 rounded-[24px] md:rounded-[32px] border border-[#5A5A40]/10">
+                      <p className="text-[11px] text-gray-500 leading-relaxed mb-4 italic">
+                        Aplikasi ini dapat diinstal di HP/Desktop agar muncul di layar beranda seperti aplikasi asli. Ini memungkinkan akses lebih cepat & performa lebih stabil.
+                      </p>
+                      
+                      {deferredPrompt ? (
+                        <div className="space-y-3">
+                          <button 
+                            onClick={handleInstallClick}
+                            className="w-full py-4 bg-[#5A5A40] text-white rounded-xl md:rounded-2xl text-[10px] font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-md active:scale-95 flex items-center justify-center gap-2"
+                          >
+                            <Download className="w-4 h-4" />
+                            Instal Aplikasi Sekarang
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="p-4 bg-white/50 rounded-2xl border border-dashed border-[#5A5A40]/20">
+                            <h4 className="text-[10px] font-black text-[#5A5A40] uppercase mb-2 tracking-widest">Instalasi Manual:</h4>
+                            <ul className="text-[10px] text-gray-500 space-y-2 list-disc pl-4 italic">
+                              <li><strong>Android:</strong> Klik <Menu className="inline w-3 h-3" /> lalu <strong>"Instal Aplikasi"</strong>.</li>
+                              <li><strong>iOS:</strong> Klik <strong>Share</strong> lalu <strong>"Add to Home Screen"</strong>.</li>
+                              <li><strong>Desktop:</strong> Klik ikon <strong>Install</strong> di URL bar (Kiri Browser).</li>
+                            </ul>
+                          </div>
+                          <button 
+                            onClick={() => window.location.reload()}
+                            className="w-full py-4 bg-white text-[#5A5A40] border border-[#5A5A40]/20 rounded-xl md:rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-[#5A5A40] hover:text-white transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            Cek Ulang (Refresh Halaman)
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="bg-white rounded-[24px] md:rounded-[40px] p-5 md:p-10 shadow-sm border border-gray-50">
                 <div className="mb-6">
                   <h2 className="text-xl md:text-2xl font-serif font-black text-[#1a1a1a] flex items-center gap-3">
@@ -1359,10 +1660,18 @@ export default function App() {
                     </p>
                   </div>
                   
+                  {settingsBtError && (
+                    <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-[10px] space-y-1">
+                      <p className="font-bold">❌ Gagal Menyambung</p>
+                      <p className="opacity-80">{settingsBtError}</p>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <button 
                       onClick={async () => {
                         try {
+                          setSettingsBtError(null);
                           const device = await requestPrinter();
                           setBtDevice(device);
                           device.addEventListener('gattserverdisconnected', () => {
@@ -1370,8 +1679,8 @@ export default function App() {
                           });
                           alert(`Terhubung ke: ${device.name || "Bluetooth Printer"}\n\nSiap digunakan untuk mencetak struk.`);
                         } catch (err: any) {
-                          if (err.message.includes("cancelled")) return;
-                          alert(`Gagal terhubung: ${err.message}\n\nTips: Pastikan printer menyala, dalam mode Bluetooth (bukan kabel), dan tidak terhubung ke perangkat lain.`);
+                          if (err.message.includes("Dibatalkan")) return;
+                          setSettingsBtError(`Gagal terhubung: ${err.message}`);
                         }
                       }}
                       className="w-full py-4 bg-white text-[#5A5A40] border border-[#5A5A40]/20 rounded-xl md:rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-[#5A5A40] hover:text-white transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2"
@@ -1396,6 +1705,7 @@ export default function App() {
                     <button 
                       onClick={async () => {
                         try {
+                          setSettingsBtError(null);
                           let device = btDevice;
                           if (!device) {
                             device = await requestPrinter();
@@ -1410,8 +1720,8 @@ export default function App() {
                           await printToBluetooth(device, escpos.getBuffer());
                           alert("Test print terkirim!");
                         } catch (err: any) {
-                          if (err.message.includes("cancelled")) return;
-                          alert(`Error: ${err.message}`);
+                          if (err.message.includes("Dibatalkan")) return;
+                          setSettingsBtError(`Error Test Print: ${err.message}`);
                         } finally {
                           setIsPrinting(false);
                         }
@@ -1438,6 +1748,10 @@ export default function App() {
 
               <form onSubmit={handleSaveSettings} className="space-y-6 md:space-y-8">
                 <div className="space-y-4 md:space-y-6">
+                  <div className="flex flex-col items-center justify-center p-8 bg-[#F5F5F0] rounded-[24px] border-2 border-dashed border-[#5A5A40]/20 mb-6">
+                    <img src="/logo.svg" alt="POS PINTAR Logo" className="w-24 h-24 shadow-lg rounded-2xl bg-white p-2" />
+                    <p className="text-[10px] font-bold text-[#5A5A40] mt-4 uppercase tracking-widest leading-none">Ikon Aplikasi (PWA)</p>
+                  </div>
                   <div>
                     <label className="block text-[10px] font-bold text-[#5A5A40] mb-2 uppercase tracking-widest">Nama Usaha</label>
                     <input 
@@ -1458,6 +1772,17 @@ export default function App() {
                     />
                   </div>
                   <div>
+                    <label className="block text-[10px] font-bold text-[#5A5A40] mb-2 uppercase tracking-widest">No. Telepon Toko</label>
+                    <input 
+                      name="storePhone"
+                      type="tel"
+                      defaultValue={settings.storePhone}
+                      required
+                      className="w-full bg-[#F5F5F0] border-none rounded-xl md:rounded-2xl py-3.5 md:py-4 px-5 md:px-6 focus:ring-2 focus:ring-[#5A5A40] transition-all font-bold text-sm"
+                      placeholder="Contoh: 0812-3456-7890"
+                    />
+                  </div>
+                  <div>
                     <label className="block text-[10px] font-bold text-[#5A5A40] mb-2 uppercase tracking-widest">Pesan Penutup Struk (Footer)</label>
                     <textarea 
                       name="receiptFooter"
@@ -1475,6 +1800,28 @@ export default function App() {
                       className="w-full bg-[#F5F5F0] border-none rounded-xl md:rounded-2xl py-3.5 md:py-4 px-5 md:px-6 focus:ring-2 focus:ring-[#5A5A40] transition-all font-bold text-sm"
                       placeholder="Contoh: Wifi: POS_PINTAR / PW: 123"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#5A5A40] mb-2 uppercase tracking-widest px-1">Integrasi Sistem</label>
+                    <div className="p-4 bg-[#F5F5F0] rounded-2xl border border-gray-100 flex items-center justify-between">
+                      <div>
+                        <h4 className="text-[11px] font-bold text-[#1a1a1a]">Aplikasi Pintar (PWA)</h4>
+                        <p className="text-[9px] text-gray-400 italic">Jadikan shortcut di layar depan</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={deferredPrompt ? handleInstallClick : () => alert("Gunakan menu Browser -> 'Instal Aplikasi' atau 'Tambahkan ke Layar Utama' untuk instalasi manual.")}
+                        className={cn(
+                          "px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all active:scale-95 flex items-center gap-2 shadow-sm",
+                          deferredPrompt 
+                            ? "bg-[#5A5A40] text-white hover:opacity-90" 
+                            : "bg-white text-gray-400 border border-gray-100"
+                        )}
+                      >
+                        {deferredPrompt ? <Download className="w-3 h-3" /> : <Monitor className="w-3 h-3" />}
+                        {deferredPrompt ? "Instal Sekarang" : "Manual Link"}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1596,6 +1943,75 @@ export default function App() {
                   Simpan Setelan
                 </button>
               </form>
+
+              {/* Data Management Section */}
+              <div className="mt-12 pt-12 border-t border-gray-100 space-y-6">
+                <div className="space-y-1">
+                  <h3 className="text-xl font-serif font-black text-[#1a1a1a]">Manajemen Data</h3>
+                  <p className="text-gray-400 text-xs italic">Ekspor, impor, atau reset seluruh data aplikasi</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                  <div className="p-6 bg-[#F5F5F0]/50 rounded-[32px] border border-gray-100 shadow-sm flex flex-col gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                        <Upload className="w-5 h-5" />
+                      </div>
+                      <h4 className="font-bold text-sm">Backup (.json)</h4>
+                    </div>
+                    <p className="text-[11px] text-gray-500 leading-relaxed italic">Unduh Produk, Histori, & Setelan ke file JSON.</p>
+                    <button 
+                      type="button"
+                      onClick={exportData}
+                      className="w-full py-4 bg-white text-[#5A5A40] border border-[#5A5A40]/20 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[#5A5A40] hover:text-white transition-all flex items-center justify-center gap-2 shadow-sm"
+                    >
+                      <Download className="w-4 h-4" />
+                      Ekspor Data
+                    </button>
+                  </div>
+
+                  <div className="p-6 bg-[#F5F5F0]/50 rounded-[32px] border border-gray-100 shadow-sm flex flex-col gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
+                        <Download className="w-5 h-5" />
+                      </div>
+                      <h4 className="font-bold text-sm">Restore (.json)</h4>
+                    </div>
+                    <p className="text-[11px] text-gray-500 leading-relaxed italic">Gunakan file backup JSON untuk memulihkan data.</p>
+                    <div className="relative">
+                      <input 
+                        type="file"
+                        accept=".json"
+                        onChange={importData}
+                        className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                      />
+                      <div className="w-full py-4 bg-white text-[#5A5A40] rounded-xl text-[10px] font-black uppercase tracking-widest border border-dashed border-[#5A5A40]/30 flex items-center justify-center gap-2">
+                        <Upload className="w-4 h-4" />
+                        Impor Data
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-6 bg-red-50 rounded-[32px] border border-red-100 flex flex-col md:flex-row md:items-center justify-between gap-6 mt-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-red-500 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-red-500/20">
+                      <Trash2 className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-red-600 text-sm uppercase tracking-wide">Pengaturan Pabrik</h4>
+                      <p className="text-[10px] text-red-400 mt-0.5">Semua data akan dihapus permanen.</p>
+                    </div>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={handleClearAllData}
+                    className="px-8 py-4 bg-red-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-600 transition-all shadow-md active:scale-95"
+                  >
+                    Kosongkan Data
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1652,6 +2068,10 @@ export default function App() {
                   cartDiscount={cartDiscount}
                   setCartDiscount={setCartDiscount}
                   discountAmount={discountAmount}
+                  generateReceiptNo={generateReceiptNo}
+                  completeTransaction={() => completeTransaction()}
+                  setIsCartOpen={setIsCartOpen}
+                  btError={btError}
                 />
               </div>
             </motion.div>
@@ -1755,85 +2175,104 @@ export default function App() {
 
       {/* Hidden Receipt for PDF/Print Rendering */}
       <div className="fixed -left-[2000px] top-0 p-8 bg-white" ref={receiptRef}>
-        <div style={{ width: '380px' }} className="text-[#1a1a1a] font-mono text-xs leading-relaxed p-6 border border-gray-100 shadow-sm bg-white">
-          {!settings.logoUrl && <div className="text-center font-black mb-2 opacity-20">================================</div>}
+        <div style={{ width: '380px' }} className="text-[#1a1a1a] font-mono text-[11px] leading-relaxed p-8 bg-white">
           <div className="text-center mb-6">
-            {settings.logoUrl && <img src={settings.logoUrl} className="w-20 h-20 mx-auto mb-4 object-contain" referrerPolicy="no-referrer" />}
-            <h2 className="text-lg font-black uppercase tracking-tighter leading-tight mb-1">{settings.storeName}</h2>
-            <p className="text-[10px] opacity-70 whitespace-pre-wrap leading-tight mb-1">{settings.storeAddress}</p>
+            {settings.logoUrl && <img src={settings.logoUrl} className="w-16 h-16 mx-auto mb-4 object-contain" referrerPolicy="no-referrer" />}
+            <h2 className="text-base font-black uppercase leading-tight mb-1">{settings.storeName}</h2>
+            <p className="text-[10px] opacity-70 whitespace-pre-wrap leading-tight">{settings.storeAddress}</p>
             {settings.storePhone && <p className="text-[10px] opacity-70">Telp: {settings.storePhone}</p>}
           </div>
-          <div className="text-center font-black mb-4 opacity-20">================================</div>
+
+          <div className="text-center opacity-20 mb-4">------------------------------------------</div>
           
           {reprintTransaction && (
-            <div className="text-center font-black mb-4 bg-gray-100 py-1 rounded">*** REPRINT STRUK ***</div>
+            <div className="text-center font-black mb-4 bg-gray-100 py-1 rounded text-[10px]">*** REPRINT STRUK ***</div>
           )}
 
-          <div className="space-y-1 mb-6 text-[10px] font-mono">
-            <div className="flex justify-between">
-              <span className="opacity-60">No. Faktur:</span>
-              <span className="font-black">{(reprintTransaction?.receiptNo || customerInfo.receiptNo || " - ")}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="opacity-60">Tanggal   :</span>
-              <span>{new Date(reprintTransaction?.timestamp || Date.now()).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="opacity-60">Nama :</span>
-              <span className="font-heavy">{(reprintTransaction?.customerInfo?.name || customerInfo.name) || "Guest"}</span>
+          <div className="space-y-1 mb-6 text-[10px]">
+            <div className="grid grid-cols-[80px_1fr] gap-2">
+              <span className="opacity-50">No. Faktur</span>
+              <span className="text-right font-black">{(reprintTransaction?.receiptNo || customerInfo.receiptNo || " - ")}</span>
+              
+              <span className="opacity-50">Tanggal</span>
+              <span className="text-right text-gray-500">
+                {(() => {
+                  const txNow = new Date();
+                  const timestamp = reprintTransaction?.timestamp || (
+                    customerInfo.customDate 
+                      ? new Date(`${customerInfo.customDate}T${txNow.getHours().toString().padStart(2, '0')}:${txNow.getMinutes().toString().padStart(2, '0')}:${txNow.getSeconds().toString().padStart(2, '0')}`).getTime() 
+                      : Date.now()
+                  );
+                  return new Date(timestamp).toLocaleString('id-ID', { 
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                  });
+                })()}
+              </span>
             </div>
           </div>
           
-          <div className="border-t-2 border-dashed border-gray-200 my-4" />
+          <div className="text-center opacity-20 mb-4">------------------------------------------</div>
           
-          <div className="space-y-4 mb-6">
+          {/* Header Table */}
+          <div className="grid grid-cols-[1fr_80px] gap-2 font-black text-[10px] opacity-50 mb-2 uppercase">
+            <span>Item</span>
+            <span className="text-right">Total</span>
+          </div>
+
+          <div className="space-y-3 mb-6">
             {(reprintTransaction?.items || cart || []).map(item => (
-              <div key={item.id}>
-                <div className="flex justify-between font-black text-[11px]">
-                  <span className="flex-1 pr-4 leading-tight">{item.name} ({item.quantity}x)</span>
-                  <span className="text-right">{(item.price * item.quantity).toLocaleString("id-ID")}</span>
+              <div key={item.id} className="space-y-0.5">
+                <div className="flex justify-between items-start gap-4">
+                  <span className="font-bold leading-tight flex-1">{item.name}</span>
+                  <span className="font-black">{(item.price * item.quantity).toLocaleString("id-ID")}</span>
                 </div>
-                <div className="flex justify-between text-[9px] opacity-60 ml-4">
-                  <span>@{item.price.toLocaleString("id-ID")}</span>
+                <div className="text-[9px] opacity-50 italic">
+                  {item.quantity}x @{item.price.toLocaleString("id-ID")}
                 </div>
               </div>
             ))}
           </div>
           
-          <div className="border-t-2 border-dashed border-gray-200 my-4" />
+          <div className="text-center opacity-20 mb-4">------------------------------------------</div>
           
-          <div className="space-y-2 mb-8 text-[11px] font-mono">
-            <div className="flex justify-between">
-              <span className="opacity-60 uppercase font-black">PAYMENT:</span>
-              <span className="font-black">{(reprintTransaction?.customerInfo?.paymentMethod || customerInfo.paymentMethod || "Tunai").toUpperCase()}</span>
+          <div className="space-y-2 mb-8 text-[11px]">
+            <div className="flex justify-between items-center">
+              <span className="opacity-50 uppercase font-bold text-[9px]">Subtotal:</span>
+              <span className="font-bold">{(reprintTransaction?.items || cart || []).reduce((sum, item) => sum + (item.price * item.quantity), 0).toLocaleString("id-ID")}</span>
             </div>
+
             {(reprintTransaction?.discount || discountAmount) > 0 && (
-              <div className="flex justify-between text-red-600">
-                <span className="opacity-60 uppercase font-black">DISKON:</span>
-                <span className="font-black">-{formatCurrency(reprintTransaction?.discount || discountAmount)}</span>
+              <div className="flex justify-between items-center text-red-600">
+                <span className="opacity-50 uppercase font-bold text-[9px]">Diskon:</span>
+                <span className="font-bold">-{formatCurrency(reprintTransaction?.discount || discountAmount)}</span>
               </div>
             )}
-            <div className="flex justify-between">
-              <span className="opacity-60 uppercase font-black">TOTAL ITEM:</span>
-              <span className="font-black">{(reprintTransaction?.items || cart || []).reduce((sum, item) => sum + item.quantity, 0)}</span>
+
+            <div className="flex justify-between items-center">
+              <span className="opacity-50 uppercase font-bold text-[9px]">Metode:</span>
+              <span className="font-black">{(reprintTransaction?.customerInfo?.paymentMethod || customerInfo.paymentMethod || "Tunai").toUpperCase()}</span>
             </div>
-            <div className="flex justify-between text-base font-black pt-3 border-t border-gray-100 mt-3">
-              <span className="tracking-tighter uppercase">TOTAL AKHIR:</span>
-              <span className="text-[#1a1a1a]">{formatCurrency(reprintTransaction?.grandTotal || grandTotal)}</span>
+
+            <div className="pt-3 mt-3 border-t border-gray-100">
+              <div className="flex justify-between items-center text-lg font-black">
+                <span className="text-[10px] tracking-tighter uppercase opacity-50">Total Akhir:</span>
+                <span className="text-[#1a1a1a]">{formatCurrency(reprintTransaction?.grandTotal || grandTotal)}</span>
+              </div>
             </div>
           </div>
           
-          <div className="text-center space-y-1 py-4 border-t-2 border-dashed border-gray-200">
+          <div className="text-center space-y-2 py-6 border-t border-dashed border-gray-200 mt-4">
             {settings.receiptFooter ? (
-              <p className="text-[11px] font-black uppercase tracking-widest whitespace-pre-wrap">{settings.receiptFooter}</p>
+              <p className="text-[10px] leading-relaxed uppercase tracking-widest whitespace-pre-wrap px-4">{settings.receiptFooter}</p>
             ) : (
-              <>
-                <p className="text-[11px] font-black uppercase tracking-widest">Terima Kasih</p>
-                <p className="text-[9px] font-black uppercase tracking-widest">Selamat Belanja Kembali</p>
-              </>
+              <div className="space-y-1">
+                <p className="text-[10px] font-black uppercase tracking-widest">Terima Kasih</p>
+                <p className="text-[8px] opacity-50 uppercase tracking-widest">Barang yang sudah dibeli tidak dapat ditukar</p>
+              </div>
             )}
           </div>
-          <div className="text-center font-black mt-2 opacity-20">================================</div>
+          <div className="text-center opacity-10 mt-2">PINAS PINTAR V1.1</div>
         </div>
       </div>
 
@@ -1850,7 +2289,7 @@ export default function App() {
             padding: 5mm;
             margin: 0;
             background: white;
-            font-family: 'Courier New', Courier, monospace;
+            font-family: 'Courier New', Courier, monospace !important;
             color: black;
           }
           @page {
@@ -1859,83 +2298,74 @@ export default function App() {
           }
         }
       `}} />
-      <div id="printable-receipt" className="hidden print:block font-mono bg-white text-black text-xs leading-relaxed p-4" style={{ width: '80mm' }}>
-        {!settings.logoUrl && <div className="text-center font-black mb-1 opacity-40">================================</div>}
-        <div className="text-center mb-6">
-          {settings.logoUrl && <img src={settings.logoUrl} className="w-20 h-20 mx-auto mb-4 object-contain" referrerPolicy="no-referrer" />}
-          <h2 className="text-sm font-black uppercase tracking-tight mb-1">{settings.storeName}</h2>
-          <p className="text-[10px] leading-tight whitespace-pre-wrap mb-1">{settings.storeAddress}</p>
+      <div id="printable-receipt" className="hidden print:block text-black text-[11px] leading-relaxed" style={{ width: '80mm' }}>
+        <div className="text-center mb-5">
+          {settings.logoUrl && <img src={settings.logoUrl} className="w-16 h-16 mx-auto mb-2 object-contain" referrerPolicy="no-referrer" />}
+          <h2 className="text-sm font-black uppercase leading-tight">{settings.storeName}</h2>
+          <p className="text-[10px] leading-tight whitespace-pre-wrap opacity-80">{settings.storeAddress}</p>
           {settings.storePhone && <p className="text-[10px]">Telp: {settings.storePhone}</p>}
         </div>
-        <div className="text-center font-black mb-3 opacity-40">================================</div>
         
-        {reprintTransaction && <div className="text-center font-bold mb-2">*** REPRINT STRUK ***</div>}
+        <div className="text-center opacity-40 mb-3">--------------------------------</div>
+        
+        {reprintTransaction && <div className="text-center font-bold mb-2 text-[10px]">*** REPRINT STRUK ***</div>}
 
-        <div className="space-y-0.5 mb-3 text-[10px]">
-          <div className="flex justify-between">
-            <span>No. Faktur: </span>
-            <span className="font-bold">{(reprintTransaction?.receiptNo || customerInfo.receiptNo || " - ")}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Tanggal   : </span>
-            <span>{new Date(reprintTransaction?.timestamp || Date.now()).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Nama : </span>
-            <span className="font-bold">{(reprintTransaction?.customerInfo?.name || customerInfo.name) || "Guest"}</span>
+        <div className="space-y-1 mb-4 text-[10px]">
+          <div className="grid grid-cols-[80px_1fr] gap-1">
+            <span>Faktur</span>
+            <span className="text-right font-bold">{(reprintTransaction?.receiptNo || customerInfo.receiptNo || " - ")}</span>
+            <span>Waktu</span>
+            <span className="text-right">{new Date(reprintTransaction?.timestamp || Date.now()).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
           </div>
         </div>
         
-        <div className="border-t border-dashed border-black my-3" />
+        <div className="text-center opacity-40 mb-3">--------------------------------</div>
         
-        <div className="space-y-4 mb-3">
+        <div className="space-y-3 mb-4">
           {(reprintTransaction?.items || cart || []).map(item => (
             <div key={item.id}>
-              <div className="flex justify-between font-bold">
-                <span className="flex-1 pr-2 leading-tight">{item.name} ({item.quantity}x)</span>
-                <span>{(item.price * item.quantity).toLocaleString("id-ID")}</span>
+              <div className="flex justify-between items-start gap-2">
+                <span className="font-bold flex-1 leading-tight">{item.name}</span>
+                <span className="font-bold">{(item.price * item.quantity).toLocaleString("id-ID")}</span>
               </div>
-              <div className="flex justify-between text-[10px] ml-4">
-                <span>@{item.price.toLocaleString("id-ID")}</span>
+              <div className="text-[10px] ml-2 opacity-70">
+                {item.quantity}x @{item.price.toLocaleString("id-ID")}
               </div>
             </div>
           ))}
         </div>
         
-        <div className="border-t border-dashed border-black my-3" />
+        <div className="text-center opacity-40 mb-3">--------------------------------</div>
         
-        <div className="space-y-1 mb-8 text-[11px]">
+        <div className="space-y-1.5 mb-6 text-[10px]">
           <div className="flex justify-between">
-            <span className="font-bold uppercase">PAYMENT:</span>
-            <span className="font-bold">{(reprintTransaction?.customerInfo?.paymentMethod || customerInfo.paymentMethod || "Tunai").toUpperCase()}</span>
+            <span>SUBTOTAL:</span>
+            <span>{(reprintTransaction?.items || cart || []).reduce((sum, item) => sum + (item.price * item.quantity), 0).toLocaleString("id-ID")}</span>
           </div>
           {(reprintTransaction?.discount || discountAmount) > 0 && (
-            <div className="flex justify-between text-red-600">
-              <span className="font-bold uppercase tracking-tighter">DISKON:</span>
-              <span className="font-bold">-{formatCurrency(reprintTransaction?.discount || discountAmount)}</span>
+            <div className="flex justify-between text-black">
+              <span>DISKON:</span>
+              <span>-{formatCurrency(reprintTransaction?.discount || discountAmount)}</span>
             </div>
           )}
-          <div className="flex justify-between">
-            <span className="font-bold uppercase">TOTAL ITEM:</span>
-            <span className="font-bold">{(reprintTransaction?.items || cart || []).reduce((sum, item) => sum + item.quantity, 0)}</span>
+          <div className="flex justify-between font-bold text-sm pt-2 border-t border-black mt-2">
+            <span>TOTAL:</span>
+            <span>{formatCurrency(reprintTransaction?.grandTotal || grandTotal)}</span>
           </div>
-          <div className="flex justify-between text-sm font-black pt-3 border-t border-black mt-3">
-            <span className="uppercase tracking-tighter">TOTAL AKHIR:</span>
+          <div className="flex justify-between pt-1 opacity-80">
+            <span>BAYAR ({reprintTransaction?.customerInfo?.paymentMethod || customerInfo.paymentMethod || "Tunai"}):</span>
             <span>{formatCurrency(reprintTransaction?.grandTotal || grandTotal)}</span>
           </div>
         </div>
         
-        <div className="text-center space-y-1 py-4 border-t border-dashed border-black">
+        <div className="text-center py-4 border-t border-dashed border-black mt-4">
           {settings.receiptFooter ? (
-            <p className="text-[11px] font-black uppercase tracking-widest whitespace-pre-wrap">{settings.receiptFooter}</p>
+            <p className="text-[10px] whitespace-pre-wrap">{settings.receiptFooter}</p>
           ) : (
-            <>
-              <p className="text-[11px] font-black uppercase">Terima Kasih</p>
-              <p className="text-[9px] font-black uppercase">Selamat Belanja Kembali</p>
-            </>
+            <p className="text-[10px] font-bold">TERIMA KASIH</p>
           )}
         </div>
-        <div className="text-center font-black mt-2 opacity-40">================================</div>
+        <div className="text-center text-[8px] opacity-30 mt-2">POS PINAS PINTAR</div>
       </div>
     </div>
   );
@@ -2459,6 +2889,10 @@ interface CartContentProps {
   cartDiscount: number;
   setCartDiscount: (val: number) => void;
   discountAmount: number;
+  generateReceiptNo: (customDate?: string) => string;
+  completeTransaction: () => void;
+  setIsCartOpen: (isOpen: boolean) => void;
+  btError?: string | null;
 }
 
 function CartContent({ 
@@ -2481,11 +2915,34 @@ function CartContent({
   btDevice,
   cartDiscount,
   setCartDiscount,
-  discountAmount
+  discountAmount,
+  generateReceiptNo,
+  completeTransaction,
+  setIsCartOpen,
+  btError
 }: CartContentProps) {
   return (
     <div className="flex flex-col h-full">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 mb-6 md:mb-8">
+        <div className="sm:col-span-2">
+          <label className="block text-[10px] font-bold text-[#5A5A40] mb-1.5 md:mb-2 uppercase tracking-widest">Tanggal Transaksi</label>
+          <div className="relative">
+            <input 
+              type="date" 
+              value={customerInfo.customDate}
+              onChange={(e) => {
+                const newDate = e.target.value;
+                setCustomerInfo({ 
+                  ...customerInfo, 
+                  customDate: newDate,
+                  receiptNo: generateReceiptNo(newDate)
+                });
+              }}
+              className="w-full bg-[#F5F5F0] border-none rounded-xl py-3 px-5 text-xs font-bold focus:ring-2 focus:ring-[#5A5A40] transition-all cursor-pointer"
+            />
+            <Clock className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40] pointer-events-none opacity-50" />
+          </div>
+        </div>
         <div>
           <label className="block text-[10px] font-bold text-[#5A5A40] mb-1.5 md:mb-2 uppercase tracking-widest">Konsumen</label>
           <input 
@@ -2633,9 +3090,17 @@ function CartContent({
           <span className="text-[#5A5A40]">{formatCurrency(grandTotal)}</span>
         </div>
         
+        {btError && (
+          <div className="mt-4 p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-[10px] space-y-1">
+            <p className="font-bold">❌ Bluetooth Error</p>
+            <p className="opacity-80">{btError}</p>
+            <p className="opacity-80 italic">Gunakan "Selesaikan Tanpa Cetak" atau "Browser Print".</p>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3 pt-6 md:pt-8">
           <button 
-            onClick={handlePrint}
+            onClick={() => handlePrint()}
             disabled={(cart?.length || 0) === 0 || isPrinting}
             className="col-span-2 bg-[#5A5A40] text-white rounded-2xl md:rounded-3xl py-5 md:py-6 font-black uppercase tracking-[0.2em] hover:opacity-90 transition-all flex flex-col items-center justify-center gap-1 shadow-xl shadow-[#5A5A40]/20 disabled:opacity-50 disabled:shadow-none active:scale-95 group"
           >
@@ -2656,7 +3121,22 @@ function CartContent({
             <span className="text-[9px] opacity-60 font-bold">Bluetooth Thermal Printer</span>
           </button>
 
-          <div className="col-span-2 grid grid-cols-2 gap-3 mt-1">
+          <button 
+            type="button"
+            onClick={() => {
+              if (window.confirm("Selesaikan transaksi tanpa cetak struk?")) {
+                completeTransaction();
+                setIsCartOpen(false);
+              }
+            }}
+            disabled={(cart?.length || 0) === 0 || isPrinting}
+            className="col-span-2 bg-white border-2 border-gray-200 text-gray-500 rounded-xl md:rounded-2xl py-3 md:py-4 font-bold uppercase tracking-widest hover:bg-gray-50 transition-all flex items-center justify-center gap-2 text-[10px] md:text-xs disabled:opacity-50 active:scale-95 mb-1"
+          >
+            <CheckCircle className="w-4 h-4" />
+            Selesaikan Tanpa Cetak (Bayar)
+          </button>
+
+          <div className="col-span-2 grid grid-cols-2 gap-3">
             <button 
               onClick={handleBrowserPrint}
               disabled={(cart?.length || 0) === 0 || isPrinting}

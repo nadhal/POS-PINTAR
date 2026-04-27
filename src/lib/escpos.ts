@@ -83,8 +83,9 @@ export class EscPos {
         img.crossOrigin = "anonymous";
         img.src = logoUrl;
         await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
+          const timeout = setTimeout(() => reject(new Error("Image load timeout")), 5000);
+          img.onload = () => { clearTimeout(timeout); resolve(null); };
+          img.onerror = () => { clearTimeout(timeout); reject(new Error("Image load error")); };
         });
 
         const canvas = document.createElement("canvas");
@@ -285,8 +286,11 @@ export async function requestPrinter() {
     
     return device;
   } catch (error: any) {
-    if (error.name === "NotFoundError" || error.message.includes("cancelled")) {
-      throw new Error("Pencetakan dibatalkan.");
+    if (error.name === "NotFoundError") {
+      throw new Error("Dibatalkan (NotFoundError).");
+    }
+    if (error.message && error.message.includes("cancelled")) {
+      throw new Error("Dibatalkan (User Cancelled).");
     }
     throw error;
   }
@@ -306,7 +310,14 @@ export async function printToBluetooth(device: any, buffer: Uint8Array) {
         await device.gatt.disconnect();
         await new Promise(resolve => setTimeout(resolve, 500));
       }
-      return await device.gatt.connect();
+      
+      // Use Promise.race to create a timeout for gatt.connect()
+      const connectPromise = device.gatt.connect();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Connection timeout")), 15000)
+      );
+      
+      return await Promise.race([connectPromise, timeoutPromise]);
     } catch (e: any) {
       console.warn(`Connection attempt ${retryCount + 1} failed:`, e);
       if (retryCount < maxRetries) {

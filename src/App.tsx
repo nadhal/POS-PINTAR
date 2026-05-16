@@ -45,7 +45,8 @@ import {
   Percent,
   Star,
   CheckCircle,
-  RefreshCw
+  RefreshCw,
+  Github
 } from "lucide-react";
 import { cn, formatCurrency } from "./lib/utils";
 import { EscPos, requestPrinter, printToBluetooth } from "./lib/escpos";
@@ -150,7 +151,8 @@ interface Transaction {
 const STORAGE_KEYS = {
   PRODUCTS: "pos_products",
   SETTINGS: "pos_settings",
-  TRANSACTIONS: "pos_transactions"
+  TRANSACTIONS: "pos_transactions",
+  CUSTOMERS: "pos_customers"
 };
 
 const getLocal = <T,>(key: string, defaultValue: T): T => {
@@ -292,12 +294,18 @@ const ProductCard = ({
 export default function App() {
   const [products, setProducts] = useState<Product[]>(() => getLocal(STORAGE_KEYS.PRODUCTS, []));
   const [transactions, setTransactions] = useState<Transaction[]>(() => getLocal(STORAGE_KEYS.TRANSACTIONS, []));
+  const [savedCustomers, setSavedCustomers] = useState<CustomerInfo[]>(() => getLocal(STORAGE_KEYS.CUSTOMERS, []));
 
   // PWA Install Prompt State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
+    // Default cart to open on desktop
+    if (window.innerWidth >= 1280) {
+      setIsCartOpen(true);
+    }
+
     setIsStandalone(window.matchMedia('(display-mode: standalone)').matches);
 
     const handleBeforeInstallPrompt = (e: any) => {
@@ -329,8 +337,11 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<string>("Semua");
   const [search, setSearch] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState("");
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [cartDiscount, setCartDiscount] = useState(0);
   const [isPrinting, setIsPrinting] = useState(false);
@@ -393,6 +404,38 @@ export default function App() {
         navigator.vibrate(200);
       }
     }
+  };
+
+  const handleSaveCustomer = (info: CustomerInfo) => {
+    if (!info.name.trim()) return;
+    
+    setSavedCustomers(prev => {
+      const exists = prev.find(c => c.name === info.name || (info.phone && c.phone === info.phone));
+      if (exists) {
+        // Update existing
+        const updated = prev.map(c => 
+          (c.name === info.name || (info.phone && c.phone === info.phone)) 
+            ? { ...c, name: info.name, phone: info.phone } 
+            : c
+        );
+        setLocal(STORAGE_KEYS.CUSTOMERS, updated);
+        return updated;
+      } else {
+        // Add new
+        const updated = [...prev, { name: info.name, phone: info.phone, receiptNo: "", paymentMethod: "Tunai" }];
+        setLocal(STORAGE_KEYS.CUSTOMERS, updated);
+        return updated;
+      }
+    });
+    playBeep('success');
+  };
+
+  const handleRemoveCustomer = (name: string) => {
+    setSavedCustomers(prev => {
+      const updated = prev.filter(c => c.name !== name);
+      setLocal(STORAGE_KEYS.CUSTOMERS, updated);
+      return updated;
+    });
   };
 
   const handleResetPin = () => {
@@ -1352,13 +1395,13 @@ export default function App() {
 
         <div className="p-4 md:p-8">
           {view === "sales" ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8">
-              {/* Product Grid */}
-              <div className="lg:col-span-10 grid grid-cols-1 md:grid-cols-12 gap-6">
-                <div className="md:col-span-10 lg:col-span-10">
+            <div className="flex flex-col xl:flex-row gap-6 md:gap-8">
+              {/* Product Grid - Now taking more space */}
+              <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-6">
+                <div className="md:col-span-10 lg:col-span-10 xl:col-span-10">
                   <motion.div 
                     layout
-                    className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4"
+                    className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4"
                   >
                     <AnimatePresence mode="popLayout">
                       {filteredProducts.length > 0 ? (
@@ -1421,11 +1464,12 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Floating Payment Bar for Mobile/Tablet was moved into bottom menu stack */}
-
-              {/* Desktop Cart Sidebar */}
-              <div className="hidden xl:block lg:col-span-2">
-                <div className="bg-white rounded-[32px] p-6 sticky top-32 shadow-sm border border-gray-50 max-h-[calc(100vh-160px)] flex flex-col overflow-y-auto">
+              {/* Desktop Cart Sidebar - Only visible on very large screens or when forced, or just keep it as a slightly smaller sidebar */}
+              <div className={cn(
+                "hidden xl:block transition-all duration-300",
+                isCartOpen ? "w-[350px]" : "w-0 overflow-hidden opacity-0"
+              )}>
+                <div className="bg-white rounded-[32px] p-6 sticky top-32 shadow-sm border border-gray-50 h-[calc(100vh-160px)] flex flex-col overflow-y-auto">
                   <CartContent 
                     cart={cart}
                     updateQuantity={updateQuantity}
@@ -1451,6 +1495,8 @@ export default function App() {
                     completeTransaction={() => completeTransaction()}
                     setIsCartOpen={setIsCartOpen}
                     btError={btError}
+                    setIsCustomerModalOpen={setIsCustomerModalOpen}
+                    setIsPaymentModalOpen={setIsPaymentModalOpen}
                   />
                 </div>
               </div>
@@ -2011,6 +2057,34 @@ export default function App() {
                     Kosongkan Data
                   </button>
                 </div>
+
+                {/* Source Code Section */}
+                <div className="mt-8 pt-8 border-t border-gray-100 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-gray-900 text-white rounded-xl flex items-center justify-center">
+                      <Github className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-serif font-black text-[#1a1a1a]">Source Code & Instalasi</h3>
+                      <p className="text-gray-400 text-[10px] italic underline">Download & Install via GitHub</p>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-[#F5F5F0]/50 rounded-[32px] p-6 border border-gray-100">
+                    <p className="text-[11px] text-gray-500 leading-relaxed mb-4 italic">
+                      Anda dapat mengunduh seluruh kode sumber aplikasi ini untuk dimodifikasi atau diinstal secara mandiri.
+                    </p>
+                    <a 
+                      href="https://github.com/nadhal/POS-PINTAR#" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="w-full py-4 bg-gray-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center justify-center gap-2 shadow-lg shadow-black/10 active:scale-95"
+                    >
+                      <Github className="w-4 h-4" />
+                      Kunjungi Koleksi GitHub
+                    </a>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -2021,7 +2095,7 @@ export default function App() {
       {/* Mobile Cart Drawer */}
       <AnimatePresence>
         {isCartOpen && (
-          <div className="fixed inset-0 z-[100] lg:hidden">
+          <div className="fixed inset-0 z-[100] xl:hidden">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -2072,6 +2146,8 @@ export default function App() {
                   completeTransaction={() => completeTransaction()}
                   setIsCartOpen={setIsCartOpen}
                   btError={btError}
+                  setIsCustomerModalOpen={setIsCustomerModalOpen}
+                  setIsPaymentModalOpen={setIsPaymentModalOpen}
                 />
               </div>
             </motion.div>
@@ -2168,6 +2244,293 @@ export default function App() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isCustomerModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsCustomerModalOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-xl bg-white rounded-[32px] md:rounded-[48px] p-8 md:p-12 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-[#F5F5F0] rounded-full -mr-16 -mt-16 z-0" />
+              
+              <div className="relative z-10 flex flex-col max-h-[calc(90vh-64px)] md:max-h-[calc(90vh-96px)]">
+                <div className="flex items-center justify-between mb-6 md:mb-8 shrink-0">
+                  <div>
+                    <h2 className="text-xl md:text-2xl font-serif font-black text-[#1a1a1a]">Info Konsumen</h2>
+                    <p className="text-[#5A5A40] text-[10px] font-bold uppercase tracking-widest mt-1">Lengkapi data transaksi</p>
+                  </div>
+                  <button onClick={() => setIsCustomerModalOpen(false)} className="p-2 bg-[#F5F5F0] rounded-full hover:bg-gray-100 transition-all">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 overflow-y-auto flex-1 pr-4 custom-scrollbar -mr-4 min-h-0 pb-6">
+                  {/* Left Side: Form */}
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#5A5A40] mb-2 uppercase tracking-widest">Nama Konsumen</label>
+                      <div className="relative">
+                        <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40] opacity-40" />
+                        <input 
+                          type="text" 
+                          placeholder="Masukkan nama..." 
+                          value={customerInfo.name}
+                          onChange={(e) => setCustomerInfo({ ...customerInfo, name: e.target.value })}
+                          className="w-full bg-[#F5F5F0] border-none rounded-xl py-4 pl-12 pr-6 text-xs font-bold focus:ring-2 focus:ring-[#5A5A40] transition-all"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#5A5A40] mb-2 uppercase tracking-widest">Nomor HP / WhatsApp</label>
+                      <div className="relative">
+                        <Clock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40] opacity-40 rotate-12" />
+                        <input 
+                          type="text" 
+                          placeholder="Contoh: 0812xxxx" 
+                          value={customerInfo.phone}
+                          onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
+                          className="w-full bg-[#F5F5F0] border-none rounded-xl py-4 pl-12 pr-6 text-xs font-bold focus:ring-2 focus:ring-[#5A5A40] transition-all"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => handleSaveCustomer(customerInfo)}
+                        className="flex-1 bg-white border-2 border-[#5A5A40] text-[#5A5A40] rounded-xl py-3 font-bold uppercase tracking-widest hover:bg-[#F5F5F0] transition-all text-[10px] flex items-center justify-center gap-2"
+                      >
+                        <Save className="w-4 h-4" />
+                        Simpan ke Kontak
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#5A5A40] mb-2 uppercase tracking-widest">Tanggal Transaksi</label>
+                      <div className="relative">
+                        <Clock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40] opacity-40" />
+                        <input 
+                          type="date" 
+                          value={customerInfo.customDate}
+                          onChange={(e) => {
+                            const newDate = e.target.value;
+                            setCustomerInfo({ 
+                              ...customerInfo, 
+                              customDate: newDate,
+                              receiptNo: generateReceiptNo(newDate)
+                            });
+                          }}
+                          className="w-full bg-[#F5F5F0] border-none rounded-xl py-4 pl-12 pr-6 text-xs font-bold focus:ring-2 focus:ring-[#5A5A40] transition-all cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                    
+                    <button 
+                      onClick={() => setIsCustomerModalOpen(false)}
+                      className="w-full bg-[#5A5A40] text-white rounded-full py-4 px-10 font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-lg shadow-[#5A5A40]/20 text-xs"
+                    >
+                      Selesai & Lanjut
+                    </button>
+                  </div>
+
+                  {/* Right Side: Saved Items */}
+                  <div className="flex flex-col shrink-0 border-t lg:border-t-0 lg:border-l border-gray-100 pt-8 lg:pt-0 lg:pl-8">
+                    <div className="shrink-0 mb-4">
+                      <label className="block text-[10px] font-bold text-[#5A5A40] mb-2 uppercase tracking-widest text-center lg:text-left">Cari Kontak Tersimpan</label>
+                      <div className="relative">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40] opacity-40" />
+                        <input 
+                          type="text" 
+                          placeholder="Nama atau HP..." 
+                          value={customerSearch}
+                          onChange={(e) => setCustomerSearch(e.target.value)}
+                          className="w-full bg-[#F5F5F0] border-none rounded-xl py-3 pl-11 pr-6 text-[10px] font-bold focus:ring-2 focus:ring-[#5A5A40] transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 pb-2">
+                      {savedCustomers.length === 0 ? (
+                        <div className="text-center py-10 opacity-30">
+                          <Users className="w-10 h-10 mx-auto mb-2" />
+                          <p className="text-[10px] font-bold uppercase tracking-widest">Belum ada kontak</p>
+                        </div>
+                      ) : (
+                        savedCustomers
+                          .filter(c => 
+                            c.name.toLowerCase().includes(customerSearch.toLowerCase()) || 
+                            c.phone.includes(customerSearch)
+                          )
+                          .map((c, i) => (
+                            <div 
+                              key={i}
+                              className="group bg-[#F5F5F0] hover:bg-[#5A5A40] p-4 rounded-2xl transition-all cursor-pointer flex items-center justify-between"
+                              onClick={() => {
+                                setCustomerInfo({ ...customerInfo, name: c.name, phone: c.phone });
+                                setCustomerSearch("");
+                              }}
+                            >
+                              <div>
+                                <p className="text-xs font-black text-[#1a1a1a] group-hover:text-white transition-colors">{c.name}</p>
+                                <p className="text-[10px] font-bold text-[#5A5A40] group-hover:text-white/60 transition-colors uppercase tracking-widest">{c.phone}</p>
+                              </div>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveCustomer(c.name);
+                                }}
+                                className="p-2 opacity-0 group-hover:opacity-100 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-all"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {isPaymentModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsPaymentModalOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-sm bg-white rounded-[32px] md:rounded-[48px] p-8 md:p-12 shadow-2xl overflow-hidden"
+            >
+              <div className="absolute bottom-0 left-0 w-32 h-32 bg-[#F5F5F0] rounded-full -ml-16 -mb-16 z-0" />
+              
+              <div className="relative z-10 text-center">
+                <div className="mb-8">
+                  <h2 className="text-2xl font-serif font-black text-[#1a1a1a]">Konfirmasi Bayar</h2>
+                  <p className="text-[#5A5A40] text-[10px] font-bold uppercase tracking-widest mt-1">Pilih metode pembayaran</p>
+                </div>
+
+                <div className="bg-[#F5F5F0] rounded-3xl p-6 mb-8">
+                  <p className="text-[10px] font-bold text-[#5A5A40] uppercase tracking-widest opacity-60 mb-2">Total Tagihan</p>
+                  <p className="text-3xl font-black text-[#1a1a1a]">{formatCurrency(grandTotal)}</p>
+                </div>
+
+                <div className="space-y-3 mb-8">
+                  <button
+                    onClick={() => setCustomerInfo({ ...customerInfo, paymentMethod: "Tunai" })}
+                    className={cn(
+                      "w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all group",
+                      customerInfo.paymentMethod === "Tunai" 
+                        ? "bg-[#5A5A40] text-white border-[#5A5A40] shadow-xl shadow-[#5A5A40]/10" 
+                        : "bg-white text-[#5A5A40] border-gray-100 hover:border-[#5A5A40]/20"
+                    )}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                        customerInfo.paymentMethod === "Tunai" ? "bg-white/10" : "bg-[#F5F5F0]"
+                      )}>
+                        <Wallet className="w-5 h-5" />
+                      </div>
+                      <span className="font-black text-sm uppercase tracking-wider">Tunai / Cash</span>
+                    </div>
+                    {customerInfo.paymentMethod === "Tunai" && <CheckCircle className="w-5 h-5" />}
+                  </button>
+
+                  <button
+                    onClick={() => setCustomerInfo({ ...customerInfo, paymentMethod: "QRIS" })}
+                    className={cn(
+                      "w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all group",
+                      customerInfo.paymentMethod === "QRIS" 
+                        ? "bg-[#5A5A40] text-white border-[#5A5A40] shadow-xl shadow-[#5A5A40]/10" 
+                        : "bg-white text-[#5A5A40] border-gray-100 hover:border-[#5A5A40]/20"
+                    )}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                        customerInfo.paymentMethod === "QRIS" ? "bg-white/10" : "bg-[#F5F5F0]"
+                      )}>
+                        <QrCode className="w-5 h-5" />
+                      </div>
+                      <span className="font-black text-sm uppercase tracking-wider">QRIS / Online</span>
+                    </div>
+                    {customerInfo.paymentMethod === "QRIS" && <CheckCircle className="w-5 h-5" />}
+                  </button>
+                </div>
+                
+                <div className="grid grid-cols-1 gap-3">
+                  <button 
+                    onClick={() => {
+                      setIsPaymentModalOpen(false);
+                      handlePrint();
+                    }}
+                    className="w-full bg-[#5A5A40] text-white rounded-full py-5 px-10 font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-xl shadow-[#5A5A40]/20 flex items-center justify-center gap-3 active:scale-95 transition-transform"
+                  >
+                    <div className="flex flex-col items-center">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Printer className="w-5 h-5" />
+                        <span>Cetak Struk (BT)</span>
+                      </div>
+                      <span className="text-[8px] opacity-60 tracking-normal">Direct Print to Thermal Printer</span>
+                    </div>
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button 
+                      onClick={handleBrowserPrint}
+                      className="bg-white border-2 border-gray-100 text-[#5A5A40] rounded-2xl py-4 font-bold uppercase tracking-widest hover:bg-[#F5F5F0] transition-all flex flex-col items-center justify-center gap-1 text-[9px] active:scale-95 transition-transform"
+                    >
+                      <Monitor className="w-4 h-4" />
+                      Browser Print
+                    </button>
+                    <button 
+                      onClick={handleDownloadPDF}
+                      className="bg-white border-2 border-gray-100 text-[#5A5A40] rounded-2xl py-4 font-bold uppercase tracking-widest hover:bg-[#F5F5F0] transition-all flex flex-col items-center justify-center gap-1 text-[9px] active:scale-95 transition-transform"
+                    >
+                      <Download className="w-4 h-4" />
+                      Simpan PDF
+                    </button>
+                  </div>
+
+                  <button 
+                    onClick={() => {
+                      setIsPaymentModalOpen(false);
+                      completeTransaction();
+                      setIsCartOpen(false);
+                    }}
+                    className="w-full py-5 text-[#5A5A40] font-black uppercase tracking-widest text-[10px] hover:bg-[#F5F5F0] rounded-2xl transition-all flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    Selesaikan Tanpa Cetak
+                  </button>
+
+                  <button 
+                    onClick={() => setIsPaymentModalOpen(false)}
+                    className="w-full py-4 text-gray-400 font-bold text-[10px] uppercase tracking-widest hover:text-black transition-colors"
+                  >
+                    Batal
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}
@@ -2893,6 +3256,8 @@ interface CartContentProps {
   completeTransaction: () => void;
   setIsCartOpen: (isOpen: boolean) => void;
   btError?: string | null;
+  setIsCustomerModalOpen: (isOpen: boolean) => void;
+  setIsPaymentModalOpen: (isOpen: boolean) => void;
 }
 
 function CartContent({ 
@@ -2919,80 +3284,30 @@ function CartContent({
   generateReceiptNo,
   completeTransaction,
   setIsCartOpen,
-  btError
+  btError,
+  setIsCustomerModalOpen,
+  setIsPaymentModalOpen
 }: CartContentProps) {
   return (
     <div className="flex flex-col h-full">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 mb-6 md:mb-8">
-        <div className="sm:col-span-2">
-          <label className="block text-[10px] font-bold text-[#5A5A40] mb-1.5 md:mb-2 uppercase tracking-widest">Tanggal Transaksi</label>
-          <div className="relative">
-            <input 
-              type="date" 
-              value={customerInfo.customDate}
-              onChange={(e) => {
-                const newDate = e.target.value;
-                setCustomerInfo({ 
-                  ...customerInfo, 
-                  customDate: newDate,
-                  receiptNo: generateReceiptNo(newDate)
-                });
-              }}
-              className="w-full bg-[#F5F5F0] border-none rounded-xl py-3 px-5 text-xs font-bold focus:ring-2 focus:ring-[#5A5A40] transition-all cursor-pointer"
-            />
-            <Clock className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40] pointer-events-none opacity-50" />
+      <div className="mb-6 md:mb-8 space-y-3">
+        <button 
+          onClick={() => setIsCustomerModalOpen(true)}
+          className="w-full bg-[#F5F5F0] hover:bg-[#EAEAE0] transition-all rounded-2xl p-4 flex items-center justify-between group"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-[#5A5A40] shadow-sm">
+              <Users className="w-5 h-5" />
+            </div>
+            <div className="text-left">
+              <p className="text-[10px] font-bold text-[#5A5A40] uppercase tracking-widest opacity-60">Info Konsumen</p>
+              <p className="text-xs font-black text-[#1a1a1a]">
+                {customerInfo.name || "Pilih Konsumen"}
+              </p>
+            </div>
           </div>
-        </div>
-        <div>
-          <label className="block text-[10px] font-bold text-[#5A5A40] mb-1.5 md:mb-2 uppercase tracking-widest">Konsumen</label>
-          <input 
-            type="text" 
-            placeholder="Nama" 
-            value={customerInfo.name}
-            onChange={(e) => setCustomerInfo({ ...customerInfo, name: e.target.value })}
-            className="w-full bg-[#F5F5F0] border-none rounded-xl py-3 px-5 text-xs font-bold focus:ring-2 focus:ring-[#5A5A40] transition-all"
-          />
-        </div>
-        <div>
-          <label className="block text-[10px] font-bold text-[#5A5A40] mb-1.5 md:mb-2 uppercase tracking-widest">HP/WA</label>
-          <input 
-            type="text" 
-            placeholder="Telepon" 
-            value={customerInfo.phone}
-            onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
-            className="w-full bg-[#F5F5F0] border-none rounded-xl py-3 px-5 text-xs font-bold focus:ring-2 focus:ring-[#5A5A40] transition-all"
-          />
-        </div>
-        
-        <div className="sm:col-span-2">
-          <label className="block text-[10px] font-bold text-[#5A5A40] mb-1.5 md:mb-2 uppercase tracking-widest text-center sm:text-left">Metode Pembayaran</label>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => setCustomerInfo({ ...customerInfo, paymentMethod: "Tunai" })}
-              className={cn(
-                "flex items-center justify-center gap-2 py-3 px-4 rounded-xl border-2 transition-all font-black text-[10px] uppercase tracking-widest",
-                customerInfo.paymentMethod === "Tunai" 
-                  ? "bg-[#5A5A40] text-white border-[#5A5A40] shadow-lg shadow-[#5A5A40]/20" 
-                  : "bg-white text-gray-400 border-gray-100 hover:bg-[#F5F5F0]"
-              )}
-            >
-              <Wallet className="w-4 h-4" />
-              Tunai
-            </button>
-            <button
-              onClick={() => setCustomerInfo({ ...customerInfo, paymentMethod: "QRIS" })}
-              className={cn(
-                "flex items-center justify-center gap-2 py-3 px-4 rounded-xl border-2 transition-all font-black text-[10px] uppercase tracking-widest",
-                customerInfo.paymentMethod === "QRIS" 
-                  ? "bg-[#5A5A40] text-white border-[#5A5A40] shadow-lg shadow-[#5A5A40]/20" 
-                  : "bg-white text-gray-400 border-gray-100 hover:bg-[#F5F5F0]"
-              )}
-            >
-              <QrCode className="w-4 h-4" />
-              QRIS
-            </button>
-          </div>
-        </div>
+          <ChevronRight className="w-4 h-4 text-gray-400 group-hover:translate-x-1 transition-transform" />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto pr-1 md:pr-2 space-y-4 md:space-y-5 mb-6 md:mb-8 min-h-0">
@@ -3098,62 +3413,24 @@ function CartContent({
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3 pt-6 md:pt-8">
+        <div className="grid grid-cols-1 gap-3 pt-6 md:pt-8">
           <button 
-            onClick={() => handlePrint()}
+            onClick={() => setIsPaymentModalOpen(true)}
             disabled={(cart?.length || 0) === 0 || isPrinting}
-            className="col-span-2 bg-[#5A5A40] text-white rounded-2xl md:rounded-3xl py-5 md:py-6 font-black uppercase tracking-[0.2em] hover:opacity-90 transition-all flex flex-col items-center justify-center gap-1 shadow-xl shadow-[#5A5A40]/20 disabled:opacity-50 disabled:shadow-none active:scale-95 group"
+            className="w-full bg-[#5A5A40] text-white rounded-2xl md:rounded-3xl py-5 md:py-6 font-black uppercase tracking-[0.2em] hover:opacity-90 transition-all flex flex-col items-center justify-center gap-1 shadow-xl shadow-[#5A5A40]/20 disabled:opacity-50 disabled:shadow-none active:scale-95 group"
           >
             <div className="flex items-center gap-3">
               {isPrinting ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <Printer className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                <CheckCircle className="w-6 h-6 group-hover:scale-110 transition-transform" />
               )}
               <span className="text-base md:text-lg">
-                {isPrinting ? (
-                  btDevice ? "Sedang Mencetak..." : "Cari Printer..."
-                ) : (
-                  btDevice ? "Bayar & Cetak" : "Pilih Printer & Bayar"
-                )}
+                Selesaikan Pesanan
               </span>
             </div>
-            <span className="text-[9px] opacity-60 font-bold">Bluetooth Thermal Printer</span>
+            <span className="text-[9px] opacity-60 font-bold tracking-widest">{formatCurrency(grandTotal)}</span>
           </button>
-
-          <button 
-            type="button"
-            onClick={() => {
-              if (window.confirm("Selesaikan transaksi tanpa cetak struk?")) {
-                completeTransaction();
-                setIsCartOpen(false);
-              }
-            }}
-            disabled={(cart?.length || 0) === 0 || isPrinting}
-            className="col-span-2 bg-white border-2 border-gray-200 text-gray-500 rounded-xl md:rounded-2xl py-3 md:py-4 font-bold uppercase tracking-widest hover:bg-gray-50 transition-all flex items-center justify-center gap-2 text-[10px] md:text-xs disabled:opacity-50 active:scale-95 mb-1"
-          >
-            <CheckCircle className="w-4 h-4" />
-            Selesaikan Tanpa Cetak (Bayar)
-          </button>
-
-          <div className="col-span-2 grid grid-cols-2 gap-3">
-            <button 
-              onClick={handleBrowserPrint}
-              disabled={(cart?.length || 0) === 0 || isPrinting}
-              className="bg-white border-2 border-[#5A5A40]/10 text-[#5A5A40] rounded-xl md:rounded-2xl py-3 md:py-4 font-bold uppercase tracking-widest hover:bg-[#F5F5F0] transition-all flex items-center justify-center gap-2 text-[10px] md:text-xs disabled:opacity-50 active:scale-95"
-            >
-              <Monitor className="w-4 h-4" />
-              Browser Print
-            </button>
-            <button 
-              onClick={handleDownloadPDF}
-              disabled={(cart?.length || 0) === 0 || isPrinting}
-              className="bg-white border-2 border-[#5A5A40]/10 text-[#5A5A40] rounded-xl md:rounded-2xl py-3 md:py-4 font-bold uppercase tracking-widest hover:bg-[#F5F5F0] transition-all flex items-center justify-center gap-2 text-[10px] md:text-xs disabled:opacity-50 active:scale-95"
-            >
-              <Download className="w-4 h-4" />
-              Simpan PDF
-            </button>
-          </div>
         </div>
       </div>
     </div>
